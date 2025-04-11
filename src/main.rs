@@ -393,18 +393,21 @@ struct Cli {
 
     #[arg(long, default_value_t = String::from("files_data.redb"))]
     db: String,
+
+    #[clap(group = "pathgroup", long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
+    path: Vec::<String>,
 }
 
 #[derive(Args, Debug)]
 #[group(required = true, multiple = false)]
 struct Cmd {
-    #[arg(long)]
+    #[arg(long, requires = "pathgroup")]
     create: bool,
 
-    #[arg(long)]
+    #[arg(long, requires = "pathgroup")]
     check: bool,
 
-    #[arg(long)]
+    #[arg(long, requires = "pathgroup")]
     update: bool,
 
     #[arg(long)]
@@ -421,21 +424,29 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         .target(env_logger::Target::Stdout)
         .init();
 
+
+    info!("args path {:?}", args.path);
+
     if args.cmd.create{
+
         if fs::try_exists(&args.db).await?{
             error!("database {} already exists", &args.db);
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
         }
         let db = Database::create(&args.db)?;
         let mut cnt = 0;
-        visit_dirs(&Path::new("tests/"),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
+        for path in args.path.iter(){
+            visit_dirs(&Path::new(path),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
+        }
         info!("Added {} files", cnt);
     }
 
     if args.cmd.check{
         let db = Database::open(&args.db)?;
         let mut files = HashSet::new();
-        visit_dirs(&Path::new("tests/"), &mut |data| check_db(&db, data, &mut files)).await?;
+        for path in args.path.iter(){
+            visit_dirs(&Path::new(path), &mut |data| check_db(&db, data, &mut files)).await?;
+        }
 
         let read_txn = db.begin_read()?;
         let table = read_txn.open_table(TABLE)?;
@@ -453,7 +464,9 @@ async fn main() -> Result<(),ItegrityWatcherError> {
     if args.cmd.update{
         let db = Database::open(&args.db)?;
         let mut cnt = 0;
-        visit_dirs(&Path::new("tests/"), &mut|data| update_db(&db, data, &mut cnt)).await?;
+        for path in args.path.iter(){
+            visit_dirs(&Path::new(path), &mut|data| update_db(&db, data, &mut cnt)).await?;
+        }
         info!("Checked {} files", cnt);
     }
 
