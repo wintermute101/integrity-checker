@@ -68,7 +68,7 @@ impl std::fmt::Display for Hash {
 struct SymlinkMetadata{
     data: String,
     permissions: u32,
-    created: u64,
+    modified: u64,
     size: u64,
 }
 
@@ -77,7 +77,7 @@ impl SymlinkMetadata {
         Ok(Self {
             data,
             permissions: meta.permissions().mode(),
-            created: match meta.modified(){
+            modified: match meta.modified(){
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
             },
@@ -88,7 +88,7 @@ impl SymlinkMetadata {
 
 impl std::fmt::Display for SymlinkMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match DateTime::from_timestamp(self.created as i64, 0){
+        match DateTime::from_timestamp(self.modified as i64, 0){
             Some(t) =>
                 write!(f, "-> {} perm: {:o} size: {} modified: {}", self.data, self.permissions, self.size, t),
             None => {
@@ -102,7 +102,7 @@ impl std::fmt::Display for SymlinkMetadata {
 struct FileMetadata{
     hash: Hash,
     permissions: u32,
-    created: u64,
+    modified: u64,
     size: u64,
 }
 
@@ -111,7 +111,7 @@ impl FileMetadata {
         Ok(Self {
             hash: hash.into(),
             permissions: meta.permissions().mode(),
-            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            modified: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
             size: meta.len(),
         })
     }
@@ -119,7 +119,7 @@ impl FileMetadata {
 
 impl std::fmt::Display for FileMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match DateTime::from_timestamp(self.created as i64, 0){
+        match DateTime::from_timestamp(self.modified as i64, 0){
             Some(t) =>
                 write!(f, "hash: {} perm: {:o} size: {} modified: {}", self.hash, self.permissions, self.size, t),
             None => {
@@ -130,9 +130,39 @@ impl std::fmt::Display for FileMetadata {
 }
 
 #[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+struct DirMetadata{
+    permissions: u32,
+    modified: u64,
+    size: u64,
+}
+
+impl DirMetadata {
+    pub fn new(meta: &std::fs::Metadata) -> Result<Self, ItegrityWatcherError> {
+        Ok(Self {
+            permissions: meta.permissions().mode(),
+            modified: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            size: meta.len(),
+        })
+    }
+}
+
+impl std::fmt::Display for DirMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match DateTime::from_timestamp(self.modified as i64, 0){
+            Some(t) =>
+                write!(f, " perm: {:o} size: {} modified: {}", self.permissions, self.size, t),
+            None => {
+                write!(f, " perm: {:o} size: {} modified: #ERROR#", self.permissions, self.size)
+            }
+        }
+    }
+}
+
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
 enum FileMetadataExt {
     Symlink(SymlinkMetadata),
     File(FileMetadata),
+    Dir(DirMetadata),
 }
 
 impl std::fmt::Display for FileMetadataExt {
@@ -143,6 +173,9 @@ impl std::fmt::Display for FileMetadataExt {
             },
             FileMetadataExt::Symlink(symlink) => {
                 write!(f, "Symlink {}", symlink)
+            }
+            FileMetadataExt::Dir(dir) => {
+                write!(f, "Directory {}", dir)
             }
         }
     }
@@ -189,10 +222,17 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
         warn!("Excluding top dir {}", dir.to_str().unwrap());
         return Ok(());
     }
-    if dir.is_dir() {
+    if dir.is_dir() && !dir.is_symlink() {
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
         while let Some(dir) = dqueue.pop_front() {
+            let path = dir.to_owned();
+            let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
+                let meta = fs::metadata(&path).await?;
+                let dir = DirMetadata::new(&meta)?;
+                Ok(Some((path.to_str().unwrap().to_owned(), FileMetadataExt::Dir(dir))))
+            });
+            files.push(s);
             let mut dir = fs::read_dir(dir).await?;
             while let Some(entry) = dir.next_entry().await? {
                 let path = entry.path();
@@ -200,53 +240,56 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                     debug!("Skipping {}", path.to_str().unwrap());
                     continue;
                 }
-                if path.is_dir() {
-                    dqueue.push_back(path);
-                } else {
-                    let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
-                        if path.is_file(){
-                            let path = path.to_str().unwrap();
-                            let meta = get_file_hash(Path::new(&path)).await?;
-                            Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
-                        }
-                        else if path.is_symlink() {
-                            let path = path.to_str().unwrap();
-                            let data = fs::read_link(path).await?;
-                            let meta = fs::symlink_metadata(path).await?;
-                            let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
-                            Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
-                        }
-                        else{
-                            warn!("Path is not file or symlink {} unsuported", path.to_str().unwrap());
-                            Ok(None)
-                        }
-                    });
-                    if files.len() >= 32{
-                        let mut table = Vec::new();
-                        let mut new_files = Vec::new();
-                        for i in files{
-                            if i.is_finished()
-                            {
-                                if let Some(r) = i.await??{
-                                    table.push(r);
-                                }
-                            }
-                            else {
-                                new_files.push(i);
-                            }
-                        }
-                        fun(&table)?;
-                        files = new_files;
+                if path.is_dir() && !path.is_symlink() {
+                    dqueue.push_back(path.to_owned());
+                }
+                let path_str = path.to_str().unwrap().to_owned();
+                let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
+                    if path.is_file(){
+                        let meta = get_file_hash(Path::new(&path)).await?;
+                        Ok(Some((path_str.to_owned(), FileMetadataExt::File(meta))))
                     }
-                    if files.len() >= 64 {
-                        trace!("Too many files, waiting...");
-                        if let Some(r) = s.await??{
-                            fun(&vec![r])?;
-                        }
+                    else if path.is_symlink() {
+                        let data = fs::read_link(&path).await?;
+                        let meta = fs::symlink_metadata(&path).await?;
+                        let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
+                        Ok(Some((path_str.to_owned(), FileMetadataExt::Symlink(sym))))
+                    }
+                    else if path.is_dir(){
+                        let meta = fs::metadata(path).await?;
+                        let dir = DirMetadata::new(&meta)?;
+                        Ok(Some((path_str.to_owned(), FileMetadataExt::Dir(dir))))
                     }
                     else{
-                        files.push(s);
+                        warn!("Path {} unsuported type", path.to_str().unwrap());
+                        Ok(None)
                     }
+                });
+                if files.len() >= 32{
+                    let mut table = Vec::new();
+                    let mut new_files = Vec::new();
+                    for i in files{
+                        if i.is_finished()
+                        {
+                            if let Some(r) = i.await??{
+                                table.push(r);
+                            }
+                        }
+                        else {
+                            new_files.push(i);
+                        }
+                    }
+                    fun(&table)?;
+                    files = new_files;
+                }
+                if files.len() >= 64 {
+                    trace!("Too many files, waiting...");
+                    if let Some(r) = s.await??{
+                        fun(&vec![r])?;
+                    }
+                }
+                else{
+                    files.push(s);
                 }
             }
         }
@@ -337,20 +380,29 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                     (FileMetadataExt::File(f), FileMetadataExt::Symlink(s)) => {
                         error!("{} File {} changed to symlink {}", k, f, s);
                     },
-                    (FileMetadataExt::File(old), FileMetadataExt::File(new)) => {
-                        if old.hash != new.hash{
-                            info = format!(" hash changed {} -> {}", old.hash, new.hash);
-                        }
-                        if old.created != new.created{
-                            let t1: String = match DateTime::from_timestamp(old.created as i64, 0){
+                    (FileMetadataExt::Dir(f), FileMetadataExt::Symlink(s)) => {
+                        error!("{} Dir {} changed to symlink {}", k, f, s);
+                    },
+                    (FileMetadataExt::Dir(f), FileMetadataExt::File(s)) => {
+                        error!("{} Dir {} changed to file {}", k, f, s);
+                    },
+                    (FileMetadataExt::Symlink(f), FileMetadataExt::Dir(s)) => {
+                        error!("{} Symlink {} changed to dir {}", k, f, s);
+                    },
+                    (FileMetadataExt::File(f), FileMetadataExt::Dir(s)) => {
+                        error!("{} File {} changed to dir {}", k, f, s);
+                    },
+                    (FileMetadataExt::Dir(old), FileMetadataExt::Dir(new)) => {
+                        if old.modified != new.modified{
+                            let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
                                 Some(t) => t.to_string(),
                                 None => "#ERROR#".to_owned(),
                             };
-                            let t2: String = match DateTime::from_timestamp(new.created as i64, 0){
+                            let t2: String = match DateTime::from_timestamp(new.modified as i64, 0){
                                 Some(t) => t.to_string(),
                                 None => "#ERROR#".to_owned(),
                             };
-                            info += &format!(" created time changed {} -> {}", t1, t2);
+                            info += &format!(" modified time changed {} -> {}", t1, t2);
                         }
                         if old.permissions != new.permissions{
                             info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
@@ -358,23 +410,46 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         if old.size != new.size{
                             info += &format!(" size changed {} -> {}", old.size, new.size);
                         }
-                        error!("File {} changed {}", k, info);
+                        error!("Dir {} changed:{}", k, info);
+                    },
+                    (FileMetadataExt::File(old), FileMetadataExt::File(new)) => {
+                        if old.hash != new.hash{
+                            info = format!(" hash changed {} -> {}", old.hash, new.hash);
+                        }
+                        if old.modified != new.modified{
+                            let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            let t2: String = match DateTime::from_timestamp(new.modified as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            info += &format!(" modified time changed {} -> {}", t1, t2);
+                        }
+                        if old.permissions != new.permissions{
+                            info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                        }
+                        if old.size != new.size{
+                            info += &format!(" size changed {} -> {}", old.size, new.size);
+                        }
+                        error!("File {} changed:{}", k, info);
                     },
                     (FileMetadataExt::Symlink(old), FileMetadataExt::Symlink(new)) => {
 
                         if old.data != new.data{
                             info = format!(" changed {} -> {}", old.data, new.data);
                         }
-                        if old.created != new.created{
-                            let t1: String = match DateTime::from_timestamp(old.created as i64, 0){
+                        if old.modified != new.modified{
+                            let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
                                 Some(t) => t.to_string(),
                                 None => "#ERROR#".to_owned(),
                             };
-                            let t2: String = match DateTime::from_timestamp(new.created as i64, 0){
+                            let t2: String = match DateTime::from_timestamp(new.modified as i64, 0){
                                 Some(t) => t.to_string(),
                                 None => "#ERROR#".to_owned(),
                             };
-                            info += &format!(" created time changed {} -> {}", t1, t2);
+                            info += &format!(" modified time changed {} -> {}", t1, t2);
                         }
                         if old.permissions != new.permissions{
                             info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
@@ -382,7 +457,7 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         if old.size != new.size{
                             info += &format!(" size changed {} -> {}", old.size, new.size);
                         }
-                        error!("Symlink {} changed {}", k, info);
+                        error!("Symlink {} changed:{}", k, info);
                     }
                 }
             }
@@ -441,7 +516,6 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         .format_timestamp(None)
         .target(env_logger::Target::Stdout)
         .init();
-
 
     info!("args path {:?}", args.path);
 
