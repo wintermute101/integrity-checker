@@ -321,10 +321,10 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                 match (old_val, v)
                 {
                     (FileMetadataExt::Symlink(s), FileMetadataExt::File(f)) => {
-                        error!("Symlink {} changed to file {}", s, f);
+                        error!("{} Symlink {} changed to file {}", k, s, f);
                     },
                     (FileMetadataExt::File(f), FileMetadataExt::Symlink(s)) => {
-                        error!("File {} changed to symlink {}", f, s);
+                        error!("{} File {} changed to symlink {}", k, f, s);
                     },
                     (FileMetadataExt::File(old), FileMetadataExt::File(new)) => {
                         if old.hash != new.hash{
