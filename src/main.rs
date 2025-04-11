@@ -77,7 +77,10 @@ impl SymlinkMetadata {
         Ok(Self {
             data,
             permissions: meta.permissions().mode(),
-            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            created: match meta.modified(){
+                Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
+                Err(_) => 0,
+            },
             size: meta.len(),
         })
     }
@@ -87,9 +90,9 @@ impl std::fmt::Display for SymlinkMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match DateTime::from_timestamp(self.created as i64, 0){
             Some(t) =>
-                write!(f, "-> {} perm: {:o} size: {} created: {}", self.data, self.permissions, self.size, t),
+                write!(f, "-> {} perm: {:o} size: {} modified: {}", self.data, self.permissions, self.size, t),
             None => {
-                write!(f, "-> {} perm: {:o} size: {} created: #ERROR#", self.data, self.permissions, self.size)
+                write!(f, "-> {} perm: {:o} size: {} modified: #ERROR#", self.data, self.permissions, self.size)
             }
         }
     }
@@ -118,9 +121,9 @@ impl std::fmt::Display for FileMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match DateTime::from_timestamp(self.created as i64, 0){
             Some(t) =>
-                write!(f, "hash: {} perm: {:o} size: {} created: {}", self.hash, self.permissions, self.size, t),
+                write!(f, "hash: {} perm: {:o} size: {} modified: {}", self.hash, self.permissions, self.size, t),
             None => {
-                write!(f, "hash: {} perm: {:o} size: {} created: #ERROR#", self.hash, self.permissions, self.size)
+                write!(f, "hash: {} perm: {:o} size: {} modified: #ERROR#", self.hash, self.permissions, self.size)
             }
         }
     }
