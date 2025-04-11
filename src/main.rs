@@ -181,10 +181,14 @@ async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError
     Ok(meta)
 }
 
-async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherError>
+async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Result<(), ItegrityWatcherError>
     where F: FnMut(&Vec<(String, FileMetadataExt)>) -> Result<(), ItegrityWatcherError> {
     type JoinReturn = Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>;
     let mut files: Vec<tokio::task::JoinHandle<JoinReturn>> = vec![];
+    if exclude.contains(dir.to_str().unwrap()){
+        warn!("Excluding top dir {}", dir.to_str().unwrap());
+        return Ok(());
+    }
     if dir.is_dir() {
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
@@ -192,6 +196,10 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
             let mut dir = fs::read_dir(dir).await?;
             while let Some(entry) = dir.next_entry().await? {
                 let path = entry.path();
+                if exclude.contains(path.to_str().unwrap()){
+                    debug!("Skipping {}", path.to_str().unwrap());
+                    continue;
+                }
                 if path.is_dir() {
                     dqueue.push_back(path);
                 } else {
@@ -401,6 +409,9 @@ struct Cli {
     #[clap(group = "pathgroup", long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
     path: Vec::<String>,
 
+    #[clap(long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
+    exclude: Vec::<String>,
+
     #[arg(long)]
     overwrite: bool,
 }
@@ -434,6 +445,12 @@ async fn main() -> Result<(),ItegrityWatcherError> {
 
     info!("args path {:?}", args.path);
 
+    let mut exlude = HashSet::new();
+
+    for i in args.exclude{
+        exlude.insert(i);
+    }
+
     if args.cmd.create{
         if args.overwrite{
             fs::remove_file(&args.db).await?;
@@ -445,7 +462,7 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::create(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
-            visit_dirs(Path::new(path),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
+            visit_dirs(Path::new(path), &exlude,&mut|data| write_to_db(&db, data, &mut cnt)).await?;
         }
         info!("Added {} files", cnt);
     }
@@ -454,7 +471,7 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::open(&args.db)?;
         let mut files = HashSet::new();
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &mut |data| check_db(&db, data, &mut files)).await?;
+            visit_dirs(Path::new(path), &exlude, &mut |data| check_db(&db, data, &mut files)).await?;
         }
 
         let read_txn = db.begin_read()?;
@@ -474,7 +491,7 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::open(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &mut|data| update_db(&db, data, &mut cnt)).await?;
+            visit_dirs(Path::new(path), &exlude, &mut|data| update_db(&db, data, &mut cnt)).await?;
         }
         info!("Checked {} files", cnt);
     }
