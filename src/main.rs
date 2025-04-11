@@ -400,6 +400,9 @@ struct Cli {
 
     #[clap(group = "pathgroup", long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
     path: Vec::<String>,
+
+    #[arg(long)]
+    overwrite: bool,
 }
 
 #[derive(Args, Debug)]
@@ -432,8 +435,10 @@ async fn main() -> Result<(),ItegrityWatcherError> {
     info!("args path {:?}", args.path);
 
     if args.cmd.create{
-
-        if fs::try_exists(&args.db).await?{
+        if args.overwrite{
+            fs::remove_file(&args.db).await?;
+        }
+        else if fs::try_exists(&args.db).await?{
             error!("database {} already exists", &args.db);
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
         }
