@@ -180,7 +180,8 @@ async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError
 
 async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherError>
     where F: FnMut(&Vec<(String, FileMetadataExt)>) -> Result<(), ItegrityWatcherError> {
-    let mut files: Vec<tokio::task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>>> = vec![];
+    type JoinReturn = Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>;
+    let mut files: Vec<tokio::task::JoinHandle<JoinReturn>> = vec![];
     if dir.is_dir() {
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
@@ -191,7 +192,7 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
                 if path.is_dir() {
                     dqueue.push_back(path);
                 } else {
-                    let s: task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>> = tokio::spawn(async move {
+                    let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
                         if path.is_file(){
                             let path = path.to_str().unwrap();
                             let meta = get_file_hash(Path::new(&path)).await?;
@@ -243,7 +244,7 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
         let path = dir.to_str().unwrap().to_owned();
         let is_file = dir.is_file();
         let is_symlink = dir.is_symlink();
-        let s: tokio::task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>> = tokio::spawn(async move {
+        let s: tokio::task::JoinHandle<JoinReturn> = tokio::spawn(async move {
             if is_file{
                 let meta = get_file_hash(Path::new(&path)).await?;
                 Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
@@ -436,7 +437,7 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::create(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
-            visit_dirs(&Path::new(path),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
+            visit_dirs(Path::new(path),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
         }
         info!("Added {} files", cnt);
     }
@@ -445,14 +446,14 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::open(&args.db)?;
         let mut files = HashSet::new();
         for path in args.path.iter(){
-            visit_dirs(&Path::new(path), &mut |data| check_db(&db, data, &mut files)).await?;
+            visit_dirs(Path::new(path), &mut |data| check_db(&db, data, &mut files)).await?;
         }
 
         let read_txn = db.begin_read()?;
         let table = read_txn.open_table(TABLE)?;
-        let mut iter = table.iter()?;
+        let iter = table.iter()?;
 
-        while let Some(k) =  iter.next(){
+        for k in iter{
             let k = k?;
             if !files.contains(&k.0.value()){
                 warn!("File removed {} {}", k.0.value(), k.1.value())
@@ -465,7 +466,7 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let db = Database::open(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
-            visit_dirs(&Path::new(path), &mut|data| update_db(&db, data, &mut cnt)).await?;
+            visit_dirs(Path::new(path), &mut|data| update_db(&db, data, &mut cnt)).await?;
         }
         info!("Checked {} files", cnt);
     }
@@ -475,9 +476,9 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         let read_txn = db.begin_read()?;
         let table = read_txn.open_table(TABLE)?;
 
-        let mut iter = table.iter()?;
+        let iter = table.iter()?;
 
-        while let Some(k) =  iter.next(){
+        for k in  iter{
             let k = k?;
             info!("File: {}: {}", k.0.value(), k.1.value());
         }
