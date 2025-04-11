@@ -1,0 +1,25 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-latest:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build in release mode
+      run: cargo build --verbose --release
+    - name: Run Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: integrity-checker-latest
+        path: target/release/integrity-checker
