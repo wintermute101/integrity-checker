@@ -12,6 +12,10 @@ use postcard::{from_bytes, to_allocvec};
 use log::{debug, error, warn, info, trace, LevelFilter};
 use env_logger::Builder;
 use clap::{Parser, Args};
+use std::collections::HashSet;
+use std::cell::Cell;
+use std::time::UNIX_EPOCH;
+use chrono::{DateTime, Utc};
 
 #[derive(Error, Debug)]
 pub enum ItegrityWatcherError {
@@ -35,6 +39,9 @@ pub enum ItegrityWatcherError {
 
     #[error("DB Commit error {0}")]
     DBCommitError(#[from] redb::CommitError),
+
+    #[error("SystemTimeError error {0}")]
+    SystemTimeError(#[from] std::time::SystemTimeError)
 
 }
 
@@ -62,7 +69,7 @@ impl std::fmt::Display for Hash {
 struct FileMetadata{
     hash: Hash,
     permissions: u32,
-    created: std::time::SystemTime,
+    created: u64,
     size: u64,
 }
 
@@ -90,18 +97,24 @@ impl Value for FileMetadata {
 
 impl std::fmt::Display for FileMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "hash: {} perm {:o} size {}", self.hash, self.permissions, self.size)
+        match DateTime::from_timestamp(self.created as i64, 0){
+            Some(t) =>
+                write!(f, "hash: {} perm: {:o} size: {} created: {}", self.hash, self.permissions, self.size, t),
+            None => {
+                write!(f, "hash: {} perm: {:o} size: {} created: #ERROR#", self.hash, self.permissions, self.size)
+            }
+        }
     }
 }
 
-const TABLE: TableDefinition<String, FileMetadata> = TableDefinition::new("my_data");
+const TABLE: TableDefinition<String, FileMetadata> = TableDefinition::new("files_database");
 
 impl FileMetadata {
-    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> io::Result<Self> {
+    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, ItegrityWatcherError> {
         Ok(Self {
             hash: hash.into(),
             permissions: meta.permissions().mode(),
-            created: meta.created()?,
+            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
             size: meta.len(),
         })
     }
@@ -126,8 +139,8 @@ async fn get_file_hash(path: &Path) -> Result<Option<FileMetadata>, ItegrityWatc
     Ok(Some(meta))
 }
 
-async fn visit_dirs<F>(dir: &Path, fun: &F) -> Result<(), ItegrityWatcherError>
-    where F: Fn(&Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
+async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherError>
+    where F: FnMut(&Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
     let mut files: Vec<tokio::task::JoinHandle<Result<Option<(String, FileMetadata)>, ItegrityWatcherError>>> = vec![];
     if dir.is_dir() {
         let mut dqueue = VecDeque::new();
@@ -139,7 +152,6 @@ async fn visit_dirs<F>(dir: &Path, fun: &F) -> Result<(), ItegrityWatcherError>
                 if path.is_dir() {
                     dqueue.push_back(path);
                 } else {
-                    trace!("File {}", path.to_str().unwrap());
                     if path.is_symlink(){
                         //println!("Symlink: {:?}", path);
                         let meta = fs::symlink_metadata(&path).await?;
@@ -243,10 +255,12 @@ fn update_db(db: &Database, data: &Vec<(String, FileMetadata)>) -> Result<(), It
     Ok(())
 }
 
-fn check_db(db: &Database, data: &Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
+fn check_db(db: &Database, data: &Vec<(String, FileMetadata)>, files: &mut HashSet<String>) -> Result<(), ItegrityWatcherError> {
     let read_txn = db.begin_read()?;
     let table = read_txn.open_table(TABLE)?;
     for (k, v) in data{
+        files.insert(k.to_owned());
+
         if let Some(sv) = table.get(k)?{
             if sv.value() != *v{
                 let val = sv.value();
@@ -280,6 +294,9 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadata)>) -> Result<(), Ite
 struct Cli {
     #[command(flatten)]
     cmd: Cmd,
+
+    #[arg(long, default_value_t = String::from("files_data.redb"))]
+    db: String,
 }
 
 #[derive(Args, Debug)]
@@ -304,37 +321,44 @@ async fn main() -> Result<(),ItegrityWatcherError> {
     Builder::new()
         .filter_level(LevelFilter::Info)
         .parse_default_env()
-        .format_timestamp(Some(env_logger::fmt::TimestampPrecision::Millis))
+        .format_timestamp(None)
         .target(env_logger::Target::Stdout)
         .init();
 
     if args.cmd.create{
-        match std::fs::remove_file("my_db.redb"){
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound{
-                }
-                else{
-                    return Err(e.into());
-                }
-            }
-            Ok(_) => {}
+        if fs::try_exists(&args.db).await?{
+            error!("database {} already exists", &args.db);
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
         }
-        let db = Database::create("my_db.redb")?;
-        visit_dirs(&Path::new("tests/"),&|data| write_to_db(&db, data)).await?;
+        let db = Database::create(&args.db)?;
+        visit_dirs(&Path::new("tests/"),&mut|data| write_to_db(&db, data)).await?;
     }
 
     if args.cmd.check{
-        let db = Database::open("my_db.redb")?;
-        visit_dirs(&Path::new("tests/"), &|data| check_db(&db, data)).await?;
+        let db = Database::open(&args.db)?;
+        let mut files = HashSet::new();
+        visit_dirs(&Path::new("tests/"), &mut |data| check_db(&db, data, &mut files)).await?;
+
+        let read_txn = db.begin_read()?;
+        let table = read_txn.open_table(TABLE)?;
+        let mut iter = table.iter()?;
+
+        while let Some(k) =  iter.next(){
+            let k = k?;
+            if !files.contains(&k.0.value()){
+                warn!("File removed {} {}", k.0.value(), k.1.value())
+            }
+        }
+        info!("Checked {} files", files.len());
     }
 
     if args.cmd.update{
-        let db = Database::open("my_db.redb")?;
-        visit_dirs(&Path::new("tests/"), &|data| update_db(&db, data)).await?;
+        let db = Database::open(&args.db)?;
+        visit_dirs(&Path::new("tests/"), &mut|data| update_db(&db, data)).await?;
     }
 
     if args.cmd.list{
-        let db = Database::open("my_db.redb")?;
+        let db = Database::open(&args.db)?;
         let read_txn = db.begin_read()?;
         let table = read_txn.open_table(TABLE)?;
 
