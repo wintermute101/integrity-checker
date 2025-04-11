@@ -229,13 +229,6 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
         while let Some(dir) = dqueue.pop_front() {
-            let path = dir.to_owned();
-            let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
-                let meta = fs::metadata(&path).await?;
-                let dir = DirMetadata::new(&meta)?;
-                Ok(Some((path.to_str().unwrap().to_owned(), FileMetadataExt::Dir(dir))))
-            });
-            files.push(s);
             let mut dir = fs::read_dir(dir).await?;
             while let Some(entry) = dir.next_entry().await? {
                 let path = entry.path();
