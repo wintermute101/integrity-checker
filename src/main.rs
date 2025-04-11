@@ -484,6 +484,9 @@ struct Cli {
     exclude: Vec::<String>,
 
     #[arg(long)]
+    dont_exclude_db: bool,
+
+    #[arg(long)]
     overwrite: bool,
 }
 
@@ -505,7 +508,7 @@ struct Cmd {
 
 #[tokio::main]
 async fn main() -> Result<(),ItegrityWatcherError> {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
     Builder::new()
         .filter_level(LevelFilter::Info)
         .parse_default_env()
@@ -513,7 +516,14 @@ async fn main() -> Result<(),ItegrityWatcherError> {
         .target(env_logger::Target::Stdout)
         .init();
 
-    info!("args path {:?}", args.path);
+    if !args.dont_exclude_db{
+        let db_path = std::path::PathBuf::from(&args.db);
+        let full_path = fs::canonicalize(db_path).await?;
+        args.exclude.push(full_path.to_str().unwrap().to_owned());
+        args.exclude.push(args.db.to_owned());
+    }
+    debug!("Paths {:?}", args.path);
+    debug!("Excluded {:?}", args.exclude);
 
     let mut exlude = HashSet::new();
 
