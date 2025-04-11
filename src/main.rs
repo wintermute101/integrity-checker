@@ -13,9 +13,8 @@ use log::{debug, error, warn, info, trace, LevelFilter};
 use env_logger::Builder;
 use clap::{Parser, Args};
 use std::collections::HashSet;
-use std::cell::Cell;
 use std::time::UNIX_EPOCH;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 
 #[derive(Error, Debug)]
 pub enum ItegrityWatcherError {
@@ -223,31 +222,33 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
     Ok(())
 }
 
-fn write_to_db(db: &Database, data: &Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
+fn write_to_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
     let write_txn = db.begin_write()?;
     {
         let mut table = write_txn.open_table(TABLE)?;
         for (k,v) in data{
             trace!("Adding file {}", k);
             table.insert(k, v)?;
+            *cnt+=1;
         }
     }
     write_txn.commit()?;
     Ok(())
 }
 
-fn update_db(db: &Database, data: &Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
+fn update_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
     let write_txn = db.begin_write()?;
     {
         let mut table = write_txn.open_table(TABLE)?;
         for (k,v) in data{
+            *cnt+=1;
             if let Some(old) = table.insert(k, v)?{
                 if old.value() != *v{
-                    info!("File updated {} {} -> {}", k, old.value().hash, v.hash);
+                    info!("File updated {} {} -> {}", k, old.value(), v);
                 }
             }
             else{
-                info!("New file {} {}", k, v.hash);
+                info!("New file {} {}", k, v);
             }
         }
     }
@@ -264,26 +265,37 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadata)>, files: &mut HashS
         if let Some(sv) = table.get(k)?{
             if sv.value() != *v{
                 let val = sv.value();
-                error!("File {} changed", k);
+
+                let mut info = String::new();
+
                 if val.hash != v.hash{
-                    error!("File hash changed {} -> {}", val.hash, v.hash);
+                    info = format!(" hash changed {} -> {}", val.hash, v.hash);
                 }
                 if val.created != v.created{
-                    error!("File created time changed");
+                    let t1: String = match DateTime::from_timestamp(val.created as i64, 0){
+                        Some(t) => t.to_string(),
+                        None => "#ERROR#".to_owned(),
+                    };
+                    let t2: String = match DateTime::from_timestamp(v.created as i64, 0){
+                        Some(t) => t.to_string(),
+                        None => "#ERROR#".to_owned(),
+                    };
+                    info += &format!(" created time changed {} -> {}", t1, t2);
                 }
                 if val.permissions != v.permissions{
-                    error!("File permissions changed {:o} -> {:o}", val.permissions, v.permissions);
+                    info += &format!(" permissions changed {:o} -> {:o}", val.permissions, v.permissions);
                 }
                 if val.size != v.size{
-                    error!("File size changed {} -> {}", val.size, v.size);
+                    info += &format!(" size changed {} -> {}", val.size, v.size);
                 }
+                error!("File {} changed {}", k, info);
             }
             else {
                 debug!("File ok {}", k);
             }
         }
         else{
-            info!("New file {} {:x?}", k, v.hash);
+            warn!("New file {} {:x?}", k, v.hash);
         }
     }
     Ok(())
@@ -331,7 +343,9 @@ async fn main() -> Result<(),ItegrityWatcherError> {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
         }
         let db = Database::create(&args.db)?;
-        visit_dirs(&Path::new("tests/"),&mut|data| write_to_db(&db, data)).await?;
+        let mut cnt = 0;
+        visit_dirs(&Path::new("tests/"),&mut|data| write_to_db(&db, data, &mut cnt)).await?;
+        info!("Added {} files", cnt);
     }
 
     if args.cmd.check{
@@ -354,7 +368,9 @@ async fn main() -> Result<(),ItegrityWatcherError> {
 
     if args.cmd.update{
         let db = Database::open(&args.db)?;
-        visit_dirs(&Path::new("tests/"), &mut|data| update_db(&db, data)).await?;
+        let mut cnt = 0;
+        visit_dirs(&Path::new("tests/"), &mut|data| update_db(&db, data, &mut cnt)).await?;
+        info!("Checked {} files", cnt);
     }
 
     if args.cmd.list{
