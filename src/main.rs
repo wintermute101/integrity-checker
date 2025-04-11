@@ -111,7 +111,10 @@ impl FileMetadata {
         Ok(Self {
             hash: hash.into(),
             permissions: meta.permissions().mode(),
-            modified: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            modified: match meta.modified(){
+                Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
+                Err(_) => 0,
+            },
             size: meta.len(),
         })
     }
