@@ -65,6 +65,37 @@ impl std::fmt::Display for Hash {
 }
 
 #[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+struct SymlinkMetadata{
+    data: String,
+    permissions: u32,
+    created: u64,
+    size: u64,
+}
+
+impl SymlinkMetadata {
+    pub fn new(meta: &std::fs::Metadata, data: String) -> Result<Self, ItegrityWatcherError> {
+        Ok(Self {
+            data,
+            permissions: meta.permissions().mode(),
+            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            size: meta.len(),
+        })
+    }
+}
+
+impl std::fmt::Display for SymlinkMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match DateTime::from_timestamp(self.created as i64, 0){
+            Some(t) =>
+                write!(f, "-> {} perm: {:o} size: {} created: {}", self.data, self.permissions, self.size, t),
+            None => {
+                write!(f, "-> {} perm: {:o} size: {} created: #ERROR#", self.data, self.permissions, self.size)
+            }
+        }
+    }
+}
+
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
 struct FileMetadata{
     hash: Hash,
     permissions: u32,
@@ -72,7 +103,49 @@ struct FileMetadata{
     size: u64,
 }
 
-impl Value for FileMetadata {
+impl FileMetadata {
+    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, ItegrityWatcherError> {
+        Ok(Self {
+            hash: hash.into(),
+            permissions: meta.permissions().mode(),
+            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            size: meta.len(),
+        })
+    }
+}
+
+impl std::fmt::Display for FileMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match DateTime::from_timestamp(self.created as i64, 0){
+            Some(t) =>
+                write!(f, "hash: {} perm: {:o} size: {} created: {}", self.hash, self.permissions, self.size, t),
+            None => {
+                write!(f, "hash: {} perm: {:o} size: {} created: #ERROR#", self.hash, self.permissions, self.size)
+            }
+        }
+    }
+}
+
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+enum FileMetadataExt {
+    Symlink(SymlinkMetadata),
+    File(FileMetadata),
+}
+
+impl std::fmt::Display for FileMetadataExt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self{
+            FileMetadataExt::File(file) => {
+                write!(f, "File {}", file)
+            },
+            FileMetadataExt::Symlink(symlink) => {
+                write!(f, "Symlink {}", symlink)
+            }
+        }
+    }
+}
+
+impl Value for FileMetadataExt {
     type SelfType<'a> = Self;
     type AsBytes<'a> = Vec<u8>;
 
@@ -94,53 +167,20 @@ impl Value for FileMetadata {
     }
 }
 
-impl std::fmt::Display for FileMetadata {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match DateTime::from_timestamp(self.created as i64, 0){
-            Some(t) =>
-                write!(f, "hash: {} perm: {:o} size: {} created: {}", self.hash, self.permissions, self.size, t),
-            None => {
-                write!(f, "hash: {} perm: {:o} size: {} created: #ERROR#", self.hash, self.permissions, self.size)
-            }
-        }
-    }
-}
+const TABLE: TableDefinition<String, FileMetadataExt> = TableDefinition::new("files_database");
 
-const TABLE: TableDefinition<String, FileMetadata> = TableDefinition::new("files_database");
-
-impl FileMetadata {
-    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, ItegrityWatcherError> {
-        Ok(Self {
-            hash: hash.into(),
-            permissions: meta.permissions().mode(),
-            created: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
-            size: meta.len(),
-        })
-    }
-}
-
-async fn get_file_hash(path: &Path) -> Result<Option<FileMetadata>, ItegrityWatcherError> {
+async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError> {
     let mut hasher = Sha256::new();
-    let mut file = match std::fs::File::open(path){
-        Ok(f) => f,
-        Err(e) =>{
-            if e.kind() == std::io::ErrorKind::NotFound{
-                return Ok(None);
-            }
-            else{
-                return Err(e.into());
-            }
-        }
-    };
+    let mut file = std::fs::File::open(path)?;
     io::copy(&mut file, &mut hasher)?;
     let result = hasher.finalize();
     let meta = FileMetadata::new(&file.metadata()?, result.into())?;
-    Ok(Some(meta))
+    Ok(meta)
 }
 
 async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherError>
-    where F: FnMut(&Vec<(String, FileMetadata)>) -> Result<(), ItegrityWatcherError> {
-    let mut files: Vec<tokio::task::JoinHandle<Result<Option<(String, FileMetadata)>, ItegrityWatcherError>>> = vec![];
+    where F: FnMut(&Vec<(String, FileMetadataExt)>) -> Result<(), ItegrityWatcherError> {
+    let mut files: Vec<tokio::task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>>> = vec![];
     if dir.is_dir() {
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
@@ -151,38 +191,40 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
                 if path.is_dir() {
                     dqueue.push_back(path);
                 } else {
-                    if path.is_symlink(){
-                        //println!("Symlink: {:?}", path);
-                        let meta = fs::symlink_metadata(&path).await?;
-                        let sympath = fs::read_link(path).await?;
-
-                        println!("Symlink: {} {} len {}", sympath.as_path().to_str().unwrap(), meta.permissions().mode(), meta.len());
-
-                        continue;
-                    }
-                    let s: task::JoinHandle<Result<Option<(String, FileMetadata)>, ItegrityWatcherError>> = tokio::spawn(async move {
-                        let path = path.to_str().unwrap();
-                        if let Some(meta) = get_file_hash(Path::new(&path)).await?{
-                            //println!("File: {:?}, Hash: {:x?}", path, meta);
-                            Ok(Some((path.to_owned(), meta)))
+                    let s: task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>> = tokio::spawn(async move {
+                        if path.is_file(){
+                            let path = path.to_str().unwrap();
+                            let meta = get_file_hash(Path::new(&path)).await?;
+                            Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
+                        }
+                        else if path.is_symlink() {
+                            let path = path.to_str().unwrap();
+                            let data = fs::read_link(path).await?;
+                            let meta = fs::symlink_metadata(path).await?;
+                            let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
+                            Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
                         }
                         else{
-                            error!("get file hash none {}", path);
+                            warn!("Path is not file or symlink {} unsuported", path.to_str().unwrap());
                             Ok(None)
                         }
                     });
                     if files.len() >= 32{
                         let mut table = Vec::new();
-                        for i in files.iter_mut(){
+                        let mut new_files = Vec::new();
+                        for i in files{
                             if i.is_finished()
                             {
                                 if let Some(r) = i.await??{
                                     table.push(r);
                                 }
                             }
+                            else {
+                                new_files.push(i);
+                            }
                         }
                         fun(&table)?;
-                        files = files.into_iter().filter(|f| !f.is_finished()).collect();
+                        files = new_files;
                     }
                     if files.len() >= 64 {
                         trace!("Too many files, waiting...");
@@ -199,10 +241,18 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
     }
     else{
         let path = dir.to_str().unwrap().to_owned();
-        let s: tokio::task::JoinHandle<Result<Option<(String, FileMetadata)>, ItegrityWatcherError>> = tokio::spawn(async move {
-            if let Some(meta) = get_file_hash(Path::new(&path)).await?{
-                //println!("File: {:?}, Hash: {:?}", path, meta);
-                Ok(Some((path.to_owned(), meta)))
+        let is_file = dir.is_file();
+        let is_symlink = dir.is_symlink();
+        let s: tokio::task::JoinHandle<Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>> = tokio::spawn(async move {
+            if is_file{
+                let meta = get_file_hash(Path::new(&path)).await?;
+                Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
+            }
+            else if is_symlink {
+                let data = fs::read_link(&path).await?;
+                let meta = fs::symlink_metadata(&path).await?;
+                let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
+                Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
             }
             else{
                 Ok(None)
@@ -222,7 +272,7 @@ async fn visit_dirs<F>(dir: &Path, fun: &mut F) -> Result<(), ItegrityWatcherErr
     Ok(())
 }
 
-fn write_to_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
+fn write_to_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
     let write_txn = db.begin_write()?;
     {
         let mut table = write_txn.open_table(TABLE)?;
@@ -236,7 +286,7 @@ fn write_to_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32)
     Ok(())
 }
 
-fn update_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
+fn update_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
     let write_txn = db.begin_write()?;
     {
         let mut table = write_txn.open_table(TABLE)?;
@@ -256,46 +306,80 @@ fn update_db(db: &Database, data: &Vec<(String, FileMetadata)>, cnt: &mut u32) -
     Ok(())
 }
 
-fn check_db(db: &Database, data: &Vec<(String, FileMetadata)>, files: &mut HashSet<String>) -> Result<(), ItegrityWatcherError> {
+fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut HashSet<String>) -> Result<(), ItegrityWatcherError> {
     let read_txn = db.begin_read()?;
     let table = read_txn.open_table(TABLE)?;
     for (k, v) in data{
         files.insert(k.to_owned());
 
-        if let Some(sv) = table.get(k)?{
-            if sv.value() != *v{
-                let val = sv.value();
-
+        if let Some(oldv) = table.get(k)?{
+            if oldv.value() != *v{
+                let old_val = oldv.value();
                 let mut info = String::new();
 
-                if val.hash != v.hash{
-                    info = format!(" hash changed {} -> {}", val.hash, v.hash);
+                match (old_val, v)
+                {
+                    (FileMetadataExt::Symlink(s), FileMetadataExt::File(f)) => {
+                        error!("Symlink {} changed to file {}", s, f);
+                    },
+                    (FileMetadataExt::File(f), FileMetadataExt::Symlink(s)) => {
+                        error!("File {} changed to symlink {}", f, s);
+                    },
+                    (FileMetadataExt::File(old), FileMetadataExt::File(new)) => {
+                        if old.hash != new.hash{
+                            info = format!(" hash changed {} -> {}", old.hash, new.hash);
+                        }
+                        if old.created != new.created{
+                            let t1: String = match DateTime::from_timestamp(old.created as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            let t2: String = match DateTime::from_timestamp(new.created as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            info += &format!(" created time changed {} -> {}", t1, t2);
+                        }
+                        if old.permissions != new.permissions{
+                            info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                        }
+                        if old.size != new.size{
+                            info += &format!(" size changed {} -> {}", old.size, new.size);
+                        }
+                        error!("File {} changed {}", k, info);
+                    },
+                    (FileMetadataExt::Symlink(old), FileMetadataExt::Symlink(new)) => {
+
+                        if old.data != new.data{
+                            info = format!(" changed {} -> {}", old.data, new.data);
+                        }
+                        if old.created != new.created{
+                            let t1: String = match DateTime::from_timestamp(old.created as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            let t2: String = match DateTime::from_timestamp(new.created as i64, 0){
+                                Some(t) => t.to_string(),
+                                None => "#ERROR#".to_owned(),
+                            };
+                            info += &format!(" created time changed {} -> {}", t1, t2);
+                        }
+                        if old.permissions != new.permissions{
+                            info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                        }
+                        if old.size != new.size{
+                            info += &format!(" size changed {} -> {}", old.size, new.size);
+                        }
+                        error!("Symlink {} changed {}", k, info);
+                    }
                 }
-                if val.created != v.created{
-                    let t1: String = match DateTime::from_timestamp(val.created as i64, 0){
-                        Some(t) => t.to_string(),
-                        None => "#ERROR#".to_owned(),
-                    };
-                    let t2: String = match DateTime::from_timestamp(v.created as i64, 0){
-                        Some(t) => t.to_string(),
-                        None => "#ERROR#".to_owned(),
-                    };
-                    info += &format!(" created time changed {} -> {}", t1, t2);
-                }
-                if val.permissions != v.permissions{
-                    info += &format!(" permissions changed {:o} -> {:o}", val.permissions, v.permissions);
-                }
-                if val.size != v.size{
-                    info += &format!(" size changed {} -> {}", val.size, v.size);
-                }
-                error!("File {} changed {}", k, info);
             }
             else {
                 debug!("File ok {}", k);
             }
         }
         else{
-            warn!("New file {} {:x?}", k, v.hash);
+            warn!("New file {} {}", k, v);
         }
     }
     Ok(())
