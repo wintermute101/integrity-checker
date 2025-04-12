@@ -506,8 +506,7 @@ struct Cmd {
     list: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(),ItegrityWatcherError> {
+async fn main_fun() -> Result<(),ItegrityWatcherError> {
     let mut args = Cli::parse();
     Builder::new()
         .filter_level(LevelFilter::Info)
@@ -518,8 +517,16 @@ async fn main() -> Result<(),ItegrityWatcherError> {
 
     if !args.dont_exclude_db{
         let db_path = std::path::PathBuf::from(&args.db);
-        let full_path = fs::canonicalize(db_path).await?;
-        args.exclude.push(full_path.to_str().unwrap().to_owned());
+        match fs::canonicalize(db_path).await{
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound{
+                    return Err(e.into());
+                }
+            }
+            Ok(f) => {
+                args.exclude.push(f.to_str().unwrap().to_owned());
+            }
+        };
         args.exclude.push(args.db.to_owned());
     }
     debug!("Paths {:?}", args.path);
@@ -533,12 +540,17 @@ async fn main() -> Result<(),ItegrityWatcherError> {
 
     if args.cmd.create{
         if args.overwrite{
-            fs::remove_file(&args.db).await?;
+            if let Err(e) = fs::remove_file(&args.db).await{
+                if e.kind() != std::io::ErrorKind::NotFound{
+                    return Err(e.into());
+                }
+            }
         }
         else if fs::try_exists(&args.db).await?{
             error!("database {} already exists", &args.db);
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
         }
+        info!("Creating db {}", args.db);
         let db = Database::create(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
@@ -590,4 +602,17 @@ async fn main() -> Result<(),ItegrityWatcherError> {
     }
 
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(),ItegrityWatcherError> {
+    match main_fun().await{
+        Err(e) => {
+            error!("Error {}", e);
+            Err(e)
+        },
+        Ok(()) => {
+            Ok(())
+        }
+    }
 }
