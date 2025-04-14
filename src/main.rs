@@ -18,8 +18,12 @@ use chrono::DateTime;
 
 #[derive(Error, Debug)]
 pub enum ItegrityWatcherError {
-    #[error("IO error {0}")]
-    IOError(#[from] std::io::Error),
+    #[error("IO error {source} file {path}")]
+    IOError{
+        #[source]
+        source: std::io::Error,
+        path: String
+    },
 
     #[error("Join error {0}")]
     JoinError(#[from] tokio::task::JoinError),
@@ -143,7 +147,7 @@ impl DirMetadata {
     pub fn new(meta: &std::fs::Metadata) -> Result<Self, ItegrityWatcherError> {
         Ok(Self {
             permissions: meta.permissions().mode(),
-            modified: meta.created()?.duration_since(UNIX_EPOCH)?.as_secs(),
+            modified: meta.created().map_err(|e| ItegrityWatcherError::IOError { source: e, path: "unknown".to_owned() })?.duration_since(UNIX_EPOCH)?.as_secs(),
             size: meta.len(),
         })
     }
@@ -210,10 +214,12 @@ const TABLE: TableDefinition<String, FileMetadataExt> = TableDefinition::new("fi
 
 async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError> {
     let mut hasher = Sha256::new();
-    let mut file = std::fs::File::open(path)?;
-    io::copy(&mut file, &mut hasher)?;
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+    io::copy(&mut file, &mut hasher)
+        .map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
     let result = hasher.finalize();
-    let meta = FileMetadata::new(&file.metadata()?, result.into())?;
+    let meta = FileMetadata::new(&file.metadata().map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
     Ok(meta)
 }
 
@@ -229,8 +235,11 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
         while let Some(dir) = dqueue.pop_front() {
-            let mut dir = fs::read_dir(dir).await?;
-            while let Some(entry) = dir.next_entry().await? {
+            let mut direntry = fs::read_dir(&dir).await
+                .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string().to_owned() })?;
+
+            while let Some(entry) = direntry.next_entry().await
+                    .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string() })? {
                 let path = entry.path();
                 if exclude.contains(path.to_str().unwrap()){
                     debug!("Skipping {}", path.to_str().unwrap());
@@ -246,13 +255,13 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                         Ok(Some((path_str.to_owned(), FileMetadataExt::File(meta))))
                     }
                     else if path.is_symlink() {
-                        let data = fs::read_link(&path).await?;
-                        let meta = fs::symlink_metadata(&path).await?;
+                        let data = fs::read_link(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
+                        let meta = fs::symlink_metadata(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
                         let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Symlink(sym))))
                     }
                     else if path.is_dir(){
-                        let meta = fs::metadata(path).await?;
+                        let meta = fs::metadata(path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
                         let dir = DirMetadata::new(&meta)?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Dir(dir))))
                     }
@@ -267,7 +276,14 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                     for i in files{
                         if i.is_finished()
                         {
-                            if let Some(r) = i.await??{
+                            let ret = match i.await?{
+                                Ok(r) => r,
+                                Err(e) => {
+                                    error!("Error {}",e);
+                                    None
+                                }
+                            };
+                            if let Some(r) = ret{
                                 table.push(r);
                             }
                         }
@@ -280,7 +296,14 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                 }
                 if files.len() >= 64 {
                     trace!("Too many files, waiting...");
-                    if let Some(r) = s.await??{
+                    let ret = match s.await?{
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("Error {}",e);
+                            None
+                        }
+                    };
+                    if let Some(r) = ret{
                         fun(&vec![r])?;
                     }
                 }
@@ -300,8 +323,8 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                 Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
             }
             else if is_symlink {
-                let data = fs::read_link(&path).await?;
-                let meta = fs::symlink_metadata(&path).await?;
+                let data = fs::read_link(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let meta = fs::symlink_metadata(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
                 let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
                 Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
             }
@@ -314,7 +337,14 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
 
     let mut table = Vec::new();
     for i in files.iter_mut(){
-        if let Some(r) = i.await??{
+        let ret = match i.await?{
+            Ok(r) => r,
+            Err(e) => {
+                error!("Error {}",e);
+                None
+            }
+        };
+        if let Some(r) = ret{
             table.push(r);
         }
     }
@@ -520,7 +550,7 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         match fs::canonicalize(db_path).await{
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound{
-                    return Err(e.into());
+                    return Err(ItegrityWatcherError::IOError { source: e, path: args.db });
                 }
             }
             Ok(f) => {
@@ -542,13 +572,13 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         if args.overwrite{
             if let Err(e) = fs::remove_file(&args.db).await{
                 if e.kind() != std::io::ErrorKind::NotFound{
-                    return Err(e.into());
+                    return Err(ItegrityWatcherError::IOError { source: e, path: args.db });
                 }
             }
         }
-        else if fs::try_exists(&args.db).await?{
+        else if fs::try_exists(&args.db).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: args.db.to_owned() })?{
             error!("database {} already exists", &args.db);
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, args.db).into());
+            return Err(ItegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::AlreadyExists, "Already exists".to_owned()), path: args.db});
         }
         info!("Creating db {}", args.db);
         let db = Database::create(&args.db)?;
