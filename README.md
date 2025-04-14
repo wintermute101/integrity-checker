@@ -11,6 +11,10 @@ Options:
       --check
       --update
       --list
-      --db <DB>  [default: files_data.redb]
-  -h, --help     Print help
-  -V, --version  Print version
+      --db <DB>               [default: files_data.redb]
+      --path <PATH>...
+      --exclude <EXCLUDE>...
+      --dont-exclude-db
+      --overwrite
+  -h, --help                  Print help
+  -V, --version               Print version
