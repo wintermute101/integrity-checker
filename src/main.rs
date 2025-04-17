@@ -367,12 +367,13 @@ fn write_to_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, cnt: &mut u
     Ok(())
 }
 
-fn update_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, cnt: &mut u32) -> Result<(), ItegrityWatcherError> {
+fn update_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, cnt: &mut u32, files: &mut HashSet<String>) -> Result<(), ItegrityWatcherError> {
     let write_txn = db.begin_write()?;
     {
         let mut table = write_txn.open_table(TABLE)?;
         for (k,v) in data{
             *cnt+=1;
+            files.insert(k.to_owned());
             if let Some(old) = table.insert(k, v)?{
                 if old.value() != *v{
                     info!("File updated {} {} -> {}", k, old.value(), v);
@@ -610,12 +611,36 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
     }
 
     if args.cmd.update{
+        let mut files = HashSet::new();
         let db = Database::open(&args.db)?;
         let mut cnt = 0;
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &exlude, &mut|data| update_db(&db, data, &mut cnt)).await?;
+            visit_dirs(Path::new(path), &exlude, &mut|data| update_db(&db, data, &mut cnt,  &mut files)).await?;
         }
-        info!("Checked {} files", cnt);
+
+        let mut to_remove = Vec::new();
+            {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(TABLE)?;
+            let iter = table.iter()?;
+
+            for k in iter{
+                let k = k?;
+                if !files.contains(&k.0.value()){
+                    to_remove.push(k.0.value());
+                }
+            }
+        }
+        let write_txn = db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(TABLE)?;
+            for k in to_remove{
+                info!("Removing file {}", k);
+                table.remove(k)?;
+            }
+        }
+        write_txn.commit()?;
+        info!("Updated {} files", cnt);
     }
 
     if args.cmd.list{
