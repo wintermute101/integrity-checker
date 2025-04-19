@@ -272,11 +272,12 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                 });
                 if files.len() >= 32{
                     let mut table = Vec::new();
-                    let mut new_files = Vec::new();
-                    for i in files{
-                        if i.is_finished()
-                        {
-                            let ret = match i.await?{
+                    let range = 0..files.len();
+                    let mut i = range.start;
+                    while i < std::cmp::min(files.len(), range.end){
+                        if files[i].is_finished(){
+                            let f = files.remove(i);
+                            let ret = match f.await?{
                                 Ok(r) => r,
                                 Err(e) => {
                                     error!("Error {}",e);
@@ -287,12 +288,11 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                                 table.push(r);
                             }
                         }
-                        else {
-                            new_files.push(i);
+                        else{
+                            i += 1;
                         }
                     }
                     fun(&table)?;
-                    files = new_files;
                 }
                 if files.len() >= 64 {
                     trace!("Too many files, waiting...");
