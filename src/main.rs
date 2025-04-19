@@ -235,8 +235,14 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
         let mut dqueue = VecDeque::new();
         dqueue.push_back(dir.to_owned());
         while let Some(dir) = dqueue.pop_front() {
-            let mut direntry = fs::read_dir(&dir).await
-                .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string().to_owned() })?;
+            let mut direntry = match fs::read_dir(&dir).await
+                .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string().to_owned() }){
+                    Ok(e) => e,
+                    Err(e) => {
+                        error!("{}", e);
+                        continue;
+                    }
+                };
 
             while let Some(entry) = direntry.next_entry().await
                     .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string() })? {
@@ -280,7 +286,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                             let ret = match f.await?{
                                 Ok(r) => r,
                                 Err(e) => {
-                                    error!("Error {}",e);
+                                    error!("{}",e);
                                     None
                                 }
                             };
@@ -299,7 +305,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                     let ret = match s.await?{
                         Ok(r) => r,
                         Err(e) => {
-                            error!("Error {}",e);
+                            error!("{}",e);
                             None
                         }
                     };
