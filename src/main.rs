@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use sha2::{Sha256, Digest};
 use std::io;
 use tokio::fs;
-use tokio::task;
+use tokio::task::JoinSet;
 use redb::{Database, ReadableTable, TableDefinition, Value};
 use serde::{Serialize, Deserialize};
 use std::os::unix::fs::PermissionsExt;
@@ -226,7 +226,7 @@ async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError
 async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Result<(), ItegrityWatcherError>
     where F: FnMut(&Vec<(String, FileMetadataExt)>) -> Result<(), ItegrityWatcherError> {
     type JoinReturn = Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>;
-    let mut files: Vec<tokio::task::JoinHandle<JoinReturn>> = vec![];
+    let mut files: JoinSet<JoinReturn> = JoinSet::new();
     if exclude.contains(dir.to_str().unwrap()){
         warn!("Excluding top dir {}", dir.to_str().unwrap());
         return Ok(());
@@ -255,7 +255,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                     dqueue.push_back(path.to_owned());
                 }
                 let path_str = path.to_str().unwrap().to_owned();
-                let s: task::JoinHandle<JoinReturn> = tokio::spawn(async move {
+                files.spawn(async move {
                     if path.is_file(){
                         let meta = get_file_hash(Path::new(&path)).await?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::File(meta))))
@@ -276,45 +276,37 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                         Ok(None)
                     }
                 });
-                if files.len() >= 32{
-                    let mut table = Vec::new();
-                    let range = 0..files.len();
-                    let mut i = range.start;
-                    while i < std::cmp::min(files.len(), range.end){
-                        if files[i].is_finished(){
-                            let f = files.remove(i);
-                            let ret = match f.await?{
-                                Ok(r) => r,
-                                Err(e) => {
-                                    error!("{}",e);
-                                    None
-                                }
-                            };
-                            if let Some(r) = ret{
-                                table.push(r);
+
+                let mut results = Vec::new();
+                if files.len() > 128{ // writing to DB in bigger chunks is way faster
+                    while let Some(result) = files.try_join_next() {
+                        let result = result?;
+                        match result{
+                            Ok(Some(r)) => {
+                                results.push(r);
+                            }
+                            Ok(None) => {},
+                            Err(e) => {
+                                error!("{e}");
                             }
                         }
-                        else{
-                            i += 1;
-                        }
                     }
-                    fun(&table)?;
                 }
-                if files.len() >= 64 {
+                if files.len() > 128{ //if we have too many files open we can crash need to throttle down
                     trace!("Too many files, waiting...");
-                    let ret = match s.await?{
-                        Ok(r) => r,
-                        Err(e) => {
-                            error!("{}",e);
-                            None
+                    let result = files.join_next().await.expect("we checked this in prev line")?;
+                    match result{
+                        Ok(Some(r)) => {
+                            results.push(r);
                         }
-                    };
-                    if let Some(r) = ret{
-                        fun(&vec![r])?;
+                        Ok(None) => {},
+                        Err(e) => {
+                            error!("{e}");
+                        }
                     }
                 }
-                else{
-                    files.push(s);
+                if results.len() > 0{
+                    fun(&results)?;
                 }
             }
         }
@@ -323,7 +315,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
         let path = dir.to_str().unwrap().to_owned();
         let is_file = dir.is_file();
         let is_symlink = dir.is_symlink();
-        let s: tokio::task::JoinHandle<JoinReturn> = tokio::spawn(async move {
+        files.spawn(async move {
             if is_file{
                 let meta = get_file_hash(Path::new(&path)).await?;
                 Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
@@ -338,23 +330,22 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                 Ok(None)
             }
         });
-        files.push(s);
     }
 
-    let mut table = Vec::new();
-    for i in files.iter_mut(){
-        let ret = match i.await?{
-            Ok(r) => r,
-            Err(e) => {
-                error!("Error {}",e);
-                None
+    let mut results = Vec::new();
+    let res = files.join_all().await;
+    for r in res{
+        match r{
+            Ok(Some(r)) => {
+                results.push(r);
             }
-        };
-        if let Some(r) = ret{
-            table.push(r);
+            Ok(None) => {},
+            Err(e) => {
+                error!("{e}");
+            }
         }
-    }
-    fun(&table)?;
+    };
+    fun(&results)?;
 
     Ok(())
 }
