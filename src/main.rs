@@ -305,7 +305,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, fun: &mut F) -> Re
                         }
                     }
                 }
-                if results.len() > 0{
+                if !results.is_empty(){
                     fun(&results)?;
                 }
             }
