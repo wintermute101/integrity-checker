@@ -147,7 +147,10 @@ impl DirMetadata {
     pub fn new(meta: &std::fs::Metadata) -> Result<Self, ItegrityWatcherError> {
         Ok(Self {
             permissions: meta.permissions().mode(),
-            modified: meta.created().map_err(|e| ItegrityWatcherError::IOError { source: e, path: "unknown".to_owned() })?.duration_since(UNIX_EPOCH)?.as_secs(),
+            modified: match meta.modified(){
+                Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
+                Err(_) => 0,
+            },
             size: meta.len(),
         })
     }
