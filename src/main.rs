@@ -519,6 +519,9 @@ struct Cli {
 
     #[arg(long)]
     overwrite: bool,
+
+    #[arg(long)]
+    db2: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -535,6 +538,9 @@ struct Cmd {
 
     #[arg(long)]
     list: bool,
+
+    #[arg(long)]
+    compare: bool,
 }
 
 async fn main_fun() -> Result<(),ItegrityWatcherError> {
@@ -641,6 +647,44 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         }
         write_txn.commit()?;
         info!("Updated {} files", cnt);
+    }
+
+    if args.cmd.compare{
+        let db2 = if let Some(dbname) = args.db2{
+            Database::open(dbname)?
+        }
+        else{
+            error!("Compare need db2 parameter");
+            return Err(ItegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::InvalidData, "".to_owned()), path: "".to_owned()});
+        };
+
+        let db = Database::open(&args.db)?;
+        let mut files = HashSet::new();
+
+        let mut orig_files = Vec::new();
+
+        let read_txn2 = db2.begin_read()?;
+        let table2 = read_txn2.open_table(TABLE)?;
+        let iter2 = table2.iter()?;
+
+        for k in iter2{
+            let k = k?;
+            orig_files.push((k.0.value(), k.1.value()));
+        }
+
+        check_db(&db, &orig_files, &mut files)?;
+
+        let read_txn = db.begin_read()?;
+        let table = read_txn.open_table(TABLE)?;
+        let iter = table.iter()?;
+
+        for k in iter{
+            let k = k?;
+            if !files.contains(&k.0.value()){
+                warn!("File removed {} {}", k.0.value(), k.1.value())
+            }
+        }
+        info!("Checked {} files", files.len());
     }
 
     if args.cmd.list{
