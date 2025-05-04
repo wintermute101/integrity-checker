@@ -420,6 +420,7 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         error!("{} File {} changed to dir {}", k, f, s);
                     },
                     (FileMetadataExt::Dir(old), FileMetadataExt::Dir(new)) => {
+                        let mut only_time_modified = true;
                         if old.modified != new.modified{
                             let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
                                 Some(t) => t.to_string(),
@@ -433,15 +434,21 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         }
                         if old.permissions != new.permissions{
                             info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                            only_time_modified = false;
                         }
                         if old.size != new.size{
                             info += &format!(" size changed {} -> {}", old.size, new.size);
+                            only_time_modified = false;
                         }
-                        error!("Dir {} changed:{}", k, info);
+                        if !only_time_modified{ //TODO: add option to that after refactor
+                            error!("Dir {} changed:{}", k, info);
+                        }
                     },
                     (FileMetadataExt::File(old), FileMetadataExt::File(new)) => {
+                        let mut only_time_modified = true;
                         if old.hash != new.hash{
                             info = format!(" hash changed {} -> {}", old.hash, new.hash);
+                            only_time_modified = false;
                         }
                         if old.modified != new.modified{
                             let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
@@ -456,16 +463,21 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         }
                         if old.permissions != new.permissions{
                             info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                            only_time_modified = false;
                         }
                         if old.size != new.size{
                             info += &format!(" size changed {} -> {}", old.size, new.size);
+                            only_time_modified = false;
                         }
-                        error!("File {} changed:{}", k, info);
+                        if !only_time_modified{ //TODO: add option to that after refactor
+                            error!("File {} changed:{}", k, info);
+                        }
                     },
                     (FileMetadataExt::Symlink(old), FileMetadataExt::Symlink(new)) => {
-
+                        let mut only_time_modified = true;
                         if old.data != new.data{
                             info = format!(" changed {} -> {}", old.data, new.data);
+                            only_time_modified = false;
                         }
                         if old.modified != new.modified{
                             let t1: String = match DateTime::from_timestamp(old.modified as i64, 0){
@@ -480,11 +492,15 @@ fn check_db(db: &Database, data: &Vec<(String, FileMetadataExt)>, files: &mut Ha
                         }
                         if old.permissions != new.permissions{
                             info += &format!(" permissions changed {:o} -> {:o}", old.permissions, new.permissions);
+                            only_time_modified = false;
                         }
                         if old.size != new.size{
                             info += &format!(" size changed {} -> {}", old.size, new.size);
+                            only_time_modified = false;
                         }
-                        error!("Symlink {} changed:{}", k, info);
+                        if !only_time_modified{ //TODO: add option to that after refactor
+                            error!("Symlink {} changed:{}", k, info);
+                        }
                     }
                 }
             }
