@@ -164,10 +164,10 @@ struct Cli {
     #[arg(long, default_value_t = String::from("files_data.redb"))]
     db: String,
 
-    #[clap(group = "pathgroup", long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
+    #[clap(group = "pathgroup", long, use_value_delimiter = true, value_delimiter = ',', num_args = 1.., help = "coma separated paths list")]
     path: Vec::<String>,
 
-    #[clap(long, use_value_delimiter = true, value_delimiter = ',', num_args = 1..)]
+    #[clap(long, use_value_delimiter = true, value_delimiter = ',', num_args = 1.., help = "coma separated exlude paths list")]
     exclude: Vec::<String>,
 
     #[arg(long)]
@@ -176,7 +176,7 @@ struct Cli {
     #[arg(long)]
     overwrite: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "second DB for compare")]
     db2: Option<String>,
 
     #[arg(long, default_value_t = false)]
@@ -186,19 +186,19 @@ struct Cli {
 #[derive(Args, Debug)]
 #[group(required = true, multiple = false)]
 struct Cmd {
-    #[arg(long, requires = "pathgroup")]
+    #[arg(long, requires = "pathgroup", help = "creates DB and stores current files metadata")]
     create: bool,
 
-    #[arg(long, requires = "pathgroup")]
+    #[arg(long, requires = "pathgroup", help = "checks current files metadata compared to DB")]
     check: bool,
 
-    #[arg(long, requires = "pathgroup")]
+    #[arg(long, requires = "pathgroup", help = "updates DB")]
     update: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "lists all files in DB")]
     list: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "compares 2 databases (simmilar to check)")]
     compare: bool,
 }
 
