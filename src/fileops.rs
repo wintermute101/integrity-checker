@@ -84,12 +84,13 @@ impl AddFileInfo for UpdateDB<'_>{
 
 pub struct CheckDB<'ldb>{
     db: &'ldb Database,
-    pub files: HashSet<String>
+    pub files: HashSet<String>,
+    compare_time: bool,
 }
 
 impl<'ldb> CheckDB<'ldb>{
-    pub fn new(db: &'ldb Database) -> Self{
-        CheckDB { db, files: HashSet::new() }
+    pub fn new(db: &'ldb Database, compare_time: bool) -> Self{
+        CheckDB { db, files: HashSet::new(), compare_time }
     }
 }
 
@@ -147,7 +148,7 @@ impl AddFileInfo for CheckDB<'_> {
                                 info += &format!(" size changed {} -> {}", old.size, new.size);
                                 only_time_modified = false;
                             }
-                            if !only_time_modified{ //TODO: add option to that after refactor
+                            if !only_time_modified || self.compare_time{
                                 error!("Dir {} changed:{}", k, info);
                             }
                         },
@@ -176,7 +177,7 @@ impl AddFileInfo for CheckDB<'_> {
                                 info += &format!(" size changed {} -> {}", old.size, new.size);
                                 only_time_modified = false;
                             }
-                            if !only_time_modified{ //TODO: add option to that after refactor
+                            if !only_time_modified || self.compare_time{
                                 error!("File {} changed:{}", k, info);
                             }
                         },
@@ -205,7 +206,7 @@ impl AddFileInfo for CheckDB<'_> {
                                 info += &format!(" size changed {} -> {}", old.size, new.size);
                                 only_time_modified = false;
                             }
-                            if !only_time_modified{ //TODO: add option to that after refactor
+                            if !only_time_modified || self.compare_time{
                                 error!("Symlink {} changed:{}", k, info);
                             }
                         }

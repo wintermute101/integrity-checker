@@ -178,6 +178,9 @@ struct Cli {
 
     #[arg(long)]
     db2: Option<String>,
+
+    #[arg(long, default_value_t = false)]
+    compare_time: bool,
 }
 
 #[derive(Args, Debug)]
@@ -254,7 +257,7 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
 
     if args.cmd.check{
         let db = Database::open(&args.db)?;
-        let mut writer = CheckDB::new(&db);
+        let mut writer = CheckDB::new(&db, args.compare_time);
 
         for path in args.path.iter(){
             visit_dirs(Path::new(path), &exlude, &mut writer).await?;
@@ -328,7 +331,7 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
             orig_files.push((k.0.value(), k.1.value()));
         }
 
-        let mut writer = CheckDB::new(&db);
+        let mut writer = CheckDB::new(&db, args.compare_time);
         writer.add_file_info(&orig_files)?;
 
         let read_txn = db.begin_read()?;
