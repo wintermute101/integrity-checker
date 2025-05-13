@@ -7,30 +7,33 @@ use tokio::task::JoinSet;
 use redb::{Database, ReadableTable};
 use log::{debug, error, warn, info, trace, LevelFilter};
 use env_logger::Builder;
-use clap::{Parser, Args};
+use clap::{Args, Parser};
 use std::collections::HashSet;
+use dirs::cache_dir;
+use std::sync::Arc;
 
 mod error;
 mod types;
 mod fileops;
-use error::ItegrityWatcherError;
+mod cicrl;
+use error::IntegrityWatcherError;
 use types::{DirMetadata, FileMetadata, FileMetadataExt, SymlinkMetadata};
 use fileops::{AddFileInfo, CheckDB, UpdateDB, WriteToDB, TABLE};
 
-async fn get_file_hash(path: &Path) -> Result<FileMetadata, ItegrityWatcherError> {
+async fn get_file_hash(path: &Path) -> Result<FileMetadata, IntegrityWatcherError> {
     let mut hasher = Sha256::new();
     let mut file = std::fs::File::open(path)
-        .map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+        .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
     io::copy(&mut file, &mut hasher)
-        .map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+        .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
     let result = hasher.finalize();
-    let meta = FileMetadata::new(&file.metadata().map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
+    let meta = FileMetadata::new(&file.metadata().map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
     Ok(meta)
 }
 
-async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> Result<(), ItegrityWatcherError>
+async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> Result<(), IntegrityWatcherError>
     where F: AddFileInfo {
-    type JoinReturn = Result<Option<(String, FileMetadataExt)>, ItegrityWatcherError>;
+    type JoinReturn = Result<Option<(String, FileMetadataExt)>, IntegrityWatcherError>;
     let mut files: JoinSet<JoinReturn> = JoinSet::new();
     if exclude.contains(dir.to_str().unwrap()){
         warn!("Excluding top dir {}", dir.to_str().unwrap());
@@ -41,7 +44,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
         dqueue.push_back(dir.to_owned());
         while let Some(dir) = dqueue.pop_front() {
             let mut direntry = match fs::read_dir(&dir).await
-                .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string().to_owned() }){
+                .map_err(|e| IntegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string().to_owned() }){
                     Ok(e) => e,
                     Err(e) => {
                         error!("{}", e);
@@ -50,7 +53,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
                 };
 
             while let Some(entry) = direntry.next_entry().await
-                    .map_err(|e| ItegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string() })? {
+                    .map_err(|e| IntegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string() })? {
                 let path = entry.path();
                 if exclude.contains(path.to_str().unwrap()){
                     debug!("Skipping {}", path.to_str().unwrap());
@@ -66,13 +69,13 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
                         Ok(Some((path_str.to_owned(), FileMetadataExt::File(meta))))
                     }
                     else if path.is_symlink() {
-                        let data = fs::read_link(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
-                        let meta = fs::symlink_metadata(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+                        let data = fs::read_link(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
+                        let meta = fs::symlink_metadata(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
                         let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Symlink(sym))))
                     }
                     else if path.is_dir(){
-                        let meta = fs::metadata(path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
+                        let meta = fs::metadata(path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
                         let dir = DirMetadata::new(&meta)?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Dir(dir))))
                     }
@@ -126,8 +129,8 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
                 Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
             }
             else if is_symlink {
-                let data = fs::read_link(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
-                let meta = fs::symlink_metadata(&path).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let data = fs::read_link(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let meta = fs::symlink_metadata(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
                 let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
                 Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
             }
@@ -181,6 +184,10 @@ struct Cli {
 
     #[arg(long, default_value_t = false)]
     compare_time: bool,
+
+   #[arg(long, default_value_t = cache_dir().unwrap_or(std::path::PathBuf::from(".")).to_string_lossy().as_ref().to_owned() + "/cicrl_cache.redb")]
+
+    cache: String,
 }
 
 #[derive(Args, Debug)]
@@ -200,9 +207,12 @@ struct Cmd {
 
     #[arg(long, help = "compares 2 databases (simmilar to check)")]
     compare: bool,
+
+    #[arg(long, help = "check DB against CIRCL hashes https://www.circl.lu/services/hashlookup/")]
+    circl_check: bool,
 }
 
-async fn main_fun() -> Result<(),ItegrityWatcherError> {
+async fn main_fun() -> Result<(),IntegrityWatcherError> {
     let mut args = Cli::parse();
     Builder::new()
         .filter_level(LevelFilter::Info)
@@ -216,7 +226,7 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         match fs::canonicalize(db_path).await{
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound{
-                    return Err(ItegrityWatcherError::IOError { source: e, path: args.db });
+                    return Err(IntegrityWatcherError::IOError { source: e, path: args.db });
                 }
             }
             Ok(f) => {
@@ -238,13 +248,13 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         if args.overwrite{
             if let Err(e) = fs::remove_file(&args.db).await{
                 if e.kind() != std::io::ErrorKind::NotFound{
-                    return Err(ItegrityWatcherError::IOError { source: e, path: args.db });
+                    return Err(IntegrityWatcherError::IOError { source: e, path: args.db });
                 }
             }
         }
-        else if fs::try_exists(&args.db).await.map_err(|e| ItegrityWatcherError::IOError { source: e, path: args.db.to_owned() })?{
+        else if fs::try_exists(&args.db).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: args.db.to_owned() })?{
             error!("database {} already exists", &args.db);
-            return Err(ItegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::AlreadyExists, "Already exists".to_owned()), path: args.db});
+            return Err(IntegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::AlreadyExists, "Already exists".to_owned()), path: args.db});
         }
         info!("Creating db {}", args.db);
         let db = Database::create(&args.db)?;
@@ -315,7 +325,7 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         }
         else{
             error!("Compare need db2 parameter");
-            return Err(ItegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::InvalidData, "".to_owned()), path: "".to_owned()});
+            return Err(IntegrityWatcherError::IOError { source: io::Error::new(io::ErrorKind::InvalidData, "".to_owned()), path: "".to_owned()});
         };
 
         let db = Database::open(&args.db)?;
@@ -360,11 +370,70 @@ async fn main_fun() -> Result<(),ItegrityWatcherError> {
         }
     }
 
+    if args.cmd.circl_check{
+        let db = Database::open(&args.db)?;
+        let read_txn = db.begin_read()?;
+        let table = read_txn.open_table(TABLE)?;
+
+        let iter = table.iter()?;
+
+        let circl = Arc::new(cicrl::CirclQuery::new(&args.cache)?);
+        type JoinReturn = Result<(String, types::Hash, Option<u8>), IntegrityWatcherError>;
+        let mut queries: JoinSet<JoinReturn> = JoinSet::new();
+
+        let fun = |q: JoinReturn| {
+            match q{
+                Ok((f, h, Some(v))) => {
+                    info!("File {f} hash {h} found with score {v}");
+                }
+                Ok((f, h, None)) => {
+                    warn!("File {f} hash {h} not found");
+                }
+                Err(e) => {
+                    error!("Error query {e}");
+                }
+            }
+        };
+        for k in  iter{
+            let k = k?;
+            let meta = k.1.value();
+
+            let fname = k.0.value().to_owned();
+            if let FileMetadataExt::File(file_meta) = meta{
+                let cc = circl.clone();
+                queries.spawn( async move{
+                    let h = file_meta.hash.clone();
+                    let r = cc.query(&h).await?;
+                    Ok((fname, h, r))
+                });
+
+                if queries.len() > 32{
+                    loop {
+                        if let Some(x) = queries.join_next().await{
+                            let x = x?;
+                            fun(x);
+                        }
+                        else{
+                            break;
+                        }
+                        if queries.len() < 8{
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let r = queries.join_all().await;
+        for i in r{
+            fun(i);
+        }
+    }
+
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> Result<(),ItegrityWatcherError> {
+async fn main() -> Result<(),IntegrityWatcherError> {
     match main_fun().await{
         Err(e) => {
             error!("Error {}", e);

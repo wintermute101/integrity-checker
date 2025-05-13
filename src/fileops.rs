@@ -1,5 +1,5 @@
 use super::types::FileMetadataExt;
-use super::error::ItegrityWatcherError;
+use super::error::IntegrityWatcherError;
 use log::{debug, error, warn, info, trace};
 use redb::{Database, TableDefinition};
 use std::collections::HashSet;
@@ -8,7 +8,7 @@ use chrono::DateTime;
 pub const TABLE: TableDefinition<String, FileMetadataExt> = TableDefinition::new("files_database");
 
 pub trait AddFileInfo {
-    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), ItegrityWatcherError>;
+    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError>;
 }
 
 pub struct WriteToDB<'ldb>{
@@ -27,7 +27,7 @@ impl<'ldb> WriteToDB<'ldb>{
 }
 
 impl AddFileInfo for WriteToDB<'_>{
-    fn add_file_info(&mut self, data: &[(String, FileMetadataExt)]) -> Result<(), ItegrityWatcherError> {
+    fn add_file_info(&mut self, data: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(TABLE)?;
@@ -59,7 +59,7 @@ impl<'ldb> UpdateDB<'ldb> {
 }
 
 impl AddFileInfo for UpdateDB<'_>{
-    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), ItegrityWatcherError> {
+    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
 
         let write_txn = self.db.begin_write()?;
         {
@@ -95,7 +95,7 @@ impl<'ldb> CheckDB<'ldb>{
 }
 
 impl AddFileInfo for CheckDB<'_> {
-    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), ItegrityWatcherError> {
+    fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
 
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(TABLE)?;

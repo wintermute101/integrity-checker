@@ -3,11 +3,11 @@ use std::os::unix::fs::PermissionsExt;
 use postcard::{from_bytes, to_allocvec};
 use std::time::UNIX_EPOCH;
 use chrono::DateTime;
-use redb::Value;
+use redb::{Value,Key};
 
-use super::error::ItegrityWatcherError;
+use super::error::IntegrityWatcherError;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Hash{
     hash: [u8;32],
 }
@@ -27,6 +27,34 @@ impl std::fmt::Display for Hash {
     }
 }
 
+impl Value for Hash {
+    type SelfType<'a> = Self;
+    type AsBytes<'a> = &'a[u8;32];
+
+    fn fixed_width() -> Option<usize> {
+        Some(32)
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where Self: 'a{
+        from_bytes(data).unwrap()
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a> {
+        &value.hash
+    }
+
+    fn type_name() -> redb::TypeName {
+        redb::TypeName::new("FileMetadata")
+    }
+}
+
+impl Key for Hash {
+   fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+       data1.cmp(data2)
+   }
+}
+
 #[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
 pub struct SymlinkMetadata{
     pub data: String,
@@ -36,7 +64,7 @@ pub struct SymlinkMetadata{
 }
 
 impl SymlinkMetadata {
-    pub fn new(meta: &std::fs::Metadata, data: String) -> Result<Self, ItegrityWatcherError> {
+    pub fn new(meta: &std::fs::Metadata, data: String) -> Result<Self, IntegrityWatcherError> {
         Ok(Self {
             data,
             permissions: meta.permissions().mode(),
@@ -70,7 +98,7 @@ pub struct FileMetadata{
 }
 
 impl FileMetadata {
-    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, ItegrityWatcherError> {
+    pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, IntegrityWatcherError> {
         Ok(Self {
             hash: hash.into(),
             permissions: meta.permissions().mode(),
@@ -103,7 +131,7 @@ pub struct DirMetadata{
 }
 
 impl DirMetadata {
-    pub fn new(meta: &std::fs::Metadata) -> Result<Self, ItegrityWatcherError> {
+    pub fn new(meta: &std::fs::Metadata) -> Result<Self, IntegrityWatcherError> {
         Ok(Self {
             permissions: meta.permissions().mode(),
             modified: match meta.modified(){
