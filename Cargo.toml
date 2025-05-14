@@ -1,6 +1,6 @@
 [package]
 name = "integrity-checker"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
@@ -22,4 +22,4 @@ tokio = { version = "1.45.0", features = ["rt-multi-thread", "macros", "fs"] }
 strip = true
 lto = true
 #debug = true
-panic = 'abort'
+#panic = 'abort'
