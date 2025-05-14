@@ -21,7 +21,7 @@ jobs:
     - name: Archive build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: integrity-checker-latest
+        name: integrity-checker-latest-ubuntu
         path: target/release/integrity-checker
   build-latest-windows:
     runs-on: windows-latest
@@ -32,5 +32,5 @@ jobs:
     - name: Archive build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: integrity-checker-latest
+        name: integrity-checker-latest-windows
         path: target/release/integrity-checker.exe
