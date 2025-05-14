@@ -26,5 +26,3 @@ Options:
   -h, --help                  Print help
   -V, --version               Print version
   ```
-
-[![CodeQL](https://github.com/wintermute101/integrity-checker/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/wintermute101/integrity-checker/actions/workflows/github-code-scanning/codeql)

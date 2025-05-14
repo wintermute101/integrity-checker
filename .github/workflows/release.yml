@@ -21,16 +21,18 @@ jobs:
         uses: "actions/github-script@v6"
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
+          tag_name: "${{ github.ref_name }}"
           script: |
             try {
+              const in_tag_name = core.getInput('tag_name', { required: true })
               const response = await github.rest.repos.createRelease({
                 draft: false,
                 generate_release_notes: true,
-                name: github.ref_name,
+                name: in_tag_name,
                 owner: context.repo.owner,
                 prerelease: false,
                 repo: context.repo.repo,
-                tag_name: github.ref_name,
+                tag_name: in_tag_name,
               });
 
               core.setOutput('release_id', response.data.id);
