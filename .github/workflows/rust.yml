@@ -10,12 +10,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-latest:
+  build-latest-linux:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - name: Build in release mode
-      run: cargo build --verbose --release
+      run: cargo build --release
     - name: Run Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Archive build artifacts
@@ -23,3 +23,14 @@ jobs:
       with:
         name: integrity-checker-latest
         path: target/release/integrity-checker
+  build-latest-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build in release mode
+      run: cargo build --release
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: integrity-checker-latest
+        path: target/release/integrity-checker.exe
