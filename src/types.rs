@@ -1,9 +1,11 @@
 use serde::{Serialize, Deserialize};
-use std::os::unix::fs::PermissionsExt;
 use postcard::{from_bytes, to_allocvec};
 use std::time::UNIX_EPOCH;
 use chrono::DateTime;
 use redb::{Value,Key};
+
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
 
 use super::error::IntegrityWatcherError;
 
@@ -65,9 +67,13 @@ pub struct SymlinkMetadata{
 
 impl SymlinkMetadata {
     pub fn new(meta: &std::fs::Metadata, data: String) -> Result<Self, IntegrityWatcherError> {
+        #[cfg(target_os = "linux")]
+        let permissions = meta.permissions().mode();
+        #[cfg(not(target_os = "linux"))]
+        let permissions = meta.permissions().readonly() as u32;
         Ok(Self {
             data,
-            permissions: meta.permissions().mode(),
+            permissions,
             modified: match meta.modified(){
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
@@ -99,9 +105,13 @@ pub struct FileMetadata{
 
 impl FileMetadata {
     pub fn new(meta: &std::fs::Metadata, hash: [u8; 32]) -> Result<Self, IntegrityWatcherError> {
+        #[cfg(target_os = "linux")]
+        let permissions = meta.permissions().mode();
+        #[cfg(not(target_os = "linux"))]
+        let permissions = meta.permissions().readonly() as u32;
         Ok(Self {
             hash: hash.into(),
-            permissions: meta.permissions().mode(),
+            permissions,
             modified: match meta.modified(){
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
@@ -132,8 +142,12 @@ pub struct DirMetadata{
 
 impl DirMetadata {
     pub fn new(meta: &std::fs::Metadata) -> Result<Self, IntegrityWatcherError> {
+        #[cfg(target_os = "linux")]
+        let permissions = meta.permissions().mode();
+        #[cfg(not(target_os = "linux"))]
+        let permissions = meta.permissions().readonly() as u32;
         Ok(Self {
-            permissions: meta.permissions().mode(),
+            permissions,
             modified: match meta.modified(){
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
