@@ -23,27 +23,17 @@ impl CacheEntry{
     }
 
     fn is_valid(&self) -> bool{
-        let end = chrono::Utc::now() + chrono::Duration::days(7);
-        if self.entry_time < end.timestamp(){
-            trace!("valid {end} {}", self.entry_time);
-            true
-        }
-        else{
-            trace!("not valid {end} {}", self.entry_time);
-            false
-        }
+        let end = if self.score.is_some(){
+            chrono::Utc::now() + chrono::Duration::days(30)
+        } else{
+            chrono::Utc::now() + chrono::Duration::days(7)
+        };
+        self.entry_time < end.timestamp()
     }
 
-    fn get_score(&self) -> Option<Option<u8>>{
-        if self.score.is_some(){
-            Some(self.score)
-        }
-        else if self.is_valid(){
-            Some(None)
-        }
-        else{
-            None
-        }
+    fn get_score(&self) -> Option<u8>{
+        //assume cache is valid because it was cleared on start
+        self.score
     }
 }
 
@@ -67,7 +57,7 @@ impl Value for CacheEntry{
     fn type_name() -> redb::TypeName {
         redb::TypeName::new("FileMetadata")
     }
-    
+
 }
 
 struct CirclCache{
@@ -137,10 +127,8 @@ impl CirclQuery {
             trust_score: u8,
         }
 
-        if let Some(v) = self.cache.contains(hash)?{
-            if let Some(score) = v.get_score(){
-                return Ok(score);
-            }
+        if let Some(score) = self.cache.contains(hash)?{
+            return Ok(score.get_score());
         }
 
         let client = self.client.clone();
