@@ -51,16 +51,17 @@ jobs:
     - name: Run Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
     - run: |
-        gzip -kf ./target/release/integrity-checker
+        cd ./target/release/
+        tar cavf integrity-checker.tar.xz integrity-checker
     - name: upload linux artifact
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         upload_url: ${{needs.create_release.outputs.upload_url}} 
-        asset_path: ./target/release/integrity-checker.gz
-        asset_name: integrity-checker.linux-amd64.tar.gz
-        asset_content_type: application/gzip
+        asset_path: ./target/release/integrity-checker.tar.xz
+        asset_name: integrity-checker-linux-amd64.tar.xz
+        asset_content_type: application/xz
 
   build-latest-windows:
     runs-on: windows-latest
@@ -70,7 +71,8 @@ jobs:
     - name: Build in release mode
       run: cargo build --release
     - run: |
-        zip target/release/integrity-checker
+        cd target/release/
+        7z a integrity-checker.zip integrity-checker.exe
     - name: upload windows artifact
       uses: actions/upload-release-asset@v1
       env:
@@ -79,4 +81,4 @@ jobs:
         upload_url: ${{needs.create_release.outputs.upload_url}} 
         asset_path: ./target/release/integrity-checker.zip
         asset_name: integrity-checker.windows-amd64.tar.gz
-        asset_content_type: application/gzip
+        asset_content_type: application/zip
