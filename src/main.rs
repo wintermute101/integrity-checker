@@ -188,7 +188,7 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     compare_time: bool,
 
-   #[arg(long, default_value_t = cache_dir().unwrap_or(std::path::PathBuf::from(".")).to_string_lossy().as_ref().to_owned() + "/cicrl_cache.redb")]
+   #[arg(long, default_value_t = cache_dir().unwrap_or(std::path::PathBuf::from(".")).to_string_lossy().as_ref().to_owned() + std::path::MAIN_SEPARATOR_STR + "cicrl_cache.redb")]
 
     cache: String,
 }
