@@ -68,7 +68,7 @@ struct CirclCache{
 impl CirclCache {
     fn new(path: &str) -> Result<Self, IntegrityWatcherError> {
         let db = Database::create(path)?;
-        let write_txn = db.begin_write()?;
+        let write_txn = db.begin_write().map_err(Box::new)?;
         {
             let _table = write_txn.open_table(TABLE_HASH)?;
         }
@@ -78,7 +78,7 @@ impl CirclCache {
     }
 
     fn clear_old(&self) -> Result<(), IntegrityWatcherError>{
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE_HASH)?;
             table.retain(|_h,v| v.is_valid())?;
@@ -88,7 +88,7 @@ impl CirclCache {
     }
 
     fn insert(&self, hash: &Hash, entry: CacheEntry) -> Result<(), IntegrityWatcherError>{
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE_HASH)?;
             trace!("Adding hash: {hash}: {entry:?}");
@@ -99,7 +99,7 @@ impl CirclCache {
     }
 
     fn contains(&self, hash: &Hash) -> Result<Option<CacheEntry>, IntegrityWatcherError> {
-        let read_txn = self.db.begin_read()?;
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE_HASH)?;
         let r = table.get(hash)?;
         Ok(r.map(|v| v.value()))

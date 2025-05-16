@@ -28,7 +28,7 @@ impl<'ldb> WriteToDB<'ldb>{
 
 impl AddFileInfo for WriteToDB<'_>{
     fn add_file_info(&mut self, data: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE)?;
             for (k,v) in data{
@@ -61,7 +61,7 @@ impl<'ldb> UpdateDB<'ldb> {
 impl AddFileInfo for UpdateDB<'_>{
     fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
 
-        let write_txn = self.db.begin_write()?;
+        let write_txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE)?;
             for (k,v) in files{
@@ -97,7 +97,7 @@ impl<'ldb> CheckDB<'ldb>{
 impl AddFileInfo for CheckDB<'_> {
     fn add_file_info(&mut self, files: &[(String, FileMetadataExt)]) -> Result<(), IntegrityWatcherError> {
 
-        let read_txn = self.db.begin_read()?;
+        let read_txn = self.db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE)?;
         for (k, v) in files{
             self.files.insert(k.to_owned());

@@ -22,7 +22,7 @@ pub enum IntegrityWatcherError {
     DBStorage(#[from] redb::StorageError),
 
     #[error("DB Transaction error {0}")]
-    DBTransaction(#[from] redb::TransactionError),
+    DBTransaction(#[from] Box<redb::TransactionError>),
 
     #[error("DB Table error {0}")]
     DBTable(#[from] redb::TableError),

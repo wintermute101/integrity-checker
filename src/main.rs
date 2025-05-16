@@ -276,7 +276,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
             visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
 
-        let read_txn = db.begin_read()?;
+        let read_txn = db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE)?;
         let iter = table.iter()?;
 
@@ -299,7 +299,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
         let mut to_remove = Vec::new();
             {
-            let read_txn = db.begin_read()?;
+            let read_txn = db.begin_read().map_err(Box::new)?;
             let table = read_txn.open_table(TABLE)?;
             let iter = table.iter()?;
 
@@ -310,7 +310,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
                 }
             }
         }
-        let write_txn = db.begin_write()?;
+        let write_txn = db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE)?;
             for k in to_remove{
@@ -335,7 +335,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
         let mut orig_files = Vec::new();
 
-        let read_txn2 = db2.begin_read()?;
+        let read_txn2 = db2.begin_read().map_err(Box::new)?;
         let table2 = read_txn2.open_table(TABLE)?;
         let iter2 = table2.iter()?;
 
@@ -347,7 +347,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         let mut writer = CheckDB::new(&db, args.compare_time);
         writer.add_file_info(&orig_files)?;
 
-        let read_txn = db.begin_read()?;
+        let read_txn = db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE)?;
         let iter = table.iter()?;
 
@@ -362,7 +362,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
     if args.cmd.list{
         let db = Database::open(&args.db)?;
-        let read_txn = db.begin_read()?;
+        let read_txn = db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE)?;
 
         let iter = table.iter()?;
@@ -375,7 +375,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
     if args.cmd.circl_check{
         let db = Database::open(&args.db)?;
-        let read_txn = db.begin_read()?;
+        let read_txn = db.begin_read().map_err(Box::new)?;
         let table = read_txn.open_table(TABLE)?;
 
         let iter = table.iter()?;
