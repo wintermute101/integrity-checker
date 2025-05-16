@@ -91,7 +91,6 @@ impl CirclCache {
         let write_txn = self.db.begin_write().map_err(Box::new)?;
         {
             let mut table = write_txn.open_table(TABLE_HASH)?;
-            trace!("Adding hash: {hash}: {entry:?}");
             table.insert(hash, entry)?;
         }
         write_txn.commit()?;
@@ -129,6 +128,7 @@ impl CirclQuery {
         }
 
         if let Some(score) = self.cache.contains(hash)?{
+            trace!("Cache hit {hash} -> {score:?}");
             return Ok(score.get_score());
         }
 
@@ -137,6 +137,7 @@ impl CirclQuery {
         let _permit = limit.acquire().await?;
 
         let url = format!("https://hashlookup.circl.lu/lookup/sha256/{}", hash);
+        trace!("Query {url}");
         let retries = 3;
         let mut cnt = 0;
         loop{
