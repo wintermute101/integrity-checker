@@ -4,7 +4,7 @@ use tokio::sync::Semaphore;
 use serde::{Deserialize, Serialize};
 use redb::{Database, TableDefinition, Value};
 use postcard::{from_bytes, to_allocvec};
-use log::trace;
+use log::{error, trace};
 use reqwest::{Client, StatusCode};
 use super::types::Hash;
 use super::error::IntegrityWatcherError;
@@ -137,22 +137,41 @@ impl CirclQuery {
         let _permit = limit.acquire().await?;
 
         let url = format!("https://hashlookup.circl.lu/lookup/sha256/{}", hash);
-        let response = client.get(&url).send().await?;
-
-        let status = response.status();
-        match status {
-            StatusCode::OK => {
-                let r =  response.json::<HashLookupResponse>().await?;
-                self.cache.insert(hash, CacheEntry::new(Some(r.trust_score)))?;
-                Ok(Some(r.trust_score))
-            }
-            StatusCode::NOT_FOUND =>{
-                self.cache.insert(hash, CacheEntry::new(None))?;
-                Ok(None)
-            }
-            _ => {
-                Err(IntegrityWatcherError::InvalidReponse { status: status.as_u16(), hash: hash.clone() })
-            }
+        let retries = 3;
+        let mut cnt = 0;
+        loop{
+            cnt += 1;
+            let response = match client.get(&url).send().await{
+                Ok(r) => r,
+                Err(e) =>{
+                    if cnt == retries{
+                        return Err(e.into());
+                    }
+                    error!("Error {e} retrying");
+                    tokio::time::sleep(Duration::from_millis(50*cnt)).await;
+                    continue;
+                }
+            };
+            let status = response.status();
+            match status {
+                StatusCode::OK => {
+                    let r =  response.json::<HashLookupResponse>().await?;
+                    self.cache.insert(hash, CacheEntry::new(Some(r.trust_score)))?;
+                    return Ok(Some(r.trust_score))
+                }
+                StatusCode::NOT_FOUND =>{
+                    self.cache.insert(hash, CacheEntry::new(None))?;
+                    return Ok(None)
+                }
+                _ => {
+                    if cnt == retries{
+                        return Err(IntegrityWatcherError::InvalidReponse { status: status.as_u16(), hash: hash.clone() })
+                    }
+                    else{
+                        error!("Got wrong status {status} on {url} retrying ");
+                    }
+                }
+            };
         }
     }
 
