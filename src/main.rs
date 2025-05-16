@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::collections::VecDeque;
 use sha2::{Sha256, Digest};
 use std::io;
@@ -20,18 +20,21 @@ use error::IntegrityWatcherError;
 use types::{DirMetadata, FileMetadata, FileMetadataExt, SymlinkMetadata};
 use fileops::{AddFileInfo, CheckDB, UpdateDB, WriteToDB, TABLE};
 
-async fn get_file_hash(path: &Path) -> Result<FileMetadata, IntegrityWatcherError> {
+async fn get_file_hash(path: PathBuf) -> Result<FileMetadata, IntegrityWatcherError> {
     let mut hasher = Sha256::new();
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
-    io::copy(&mut file, &mut hasher)
-        .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
-    let result = hasher.finalize();
-    let meta = FileMetadata::new(&file.metadata().map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
+    let meta = tokio::task::spawn_blocking(move || -> Result<FileMetadata, IntegrityWatcherError> {
+        let mut file = std::fs::File::open(&path)
+            .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+        io::copy(&mut file, &mut hasher)
+            .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+        let result = hasher.finalize();
+        let meta = FileMetadata::new(&file.metadata().map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
+        Ok(meta)
+    }).await??;
     Ok(meta)
 }
 
-async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> Result<(), IntegrityWatcherError>
+async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -> Result<(), IntegrityWatcherError>
     where F: AddFileInfo {
     type JoinReturn = Result<Option<(String, FileMetadataExt)>, IntegrityWatcherError>;
     let mut files: JoinSet<JoinReturn> = JoinSet::new();
@@ -65,7 +68,7 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
                 let path_str = path.to_str().unwrap().to_owned();
                 files.spawn(async move {
                     if path.is_file(){
-                        let meta = get_file_hash(Path::new(&path)).await?;
+                        let meta = get_file_hash(path).await?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::File(meta))))
                     }
                     else if path.is_symlink() {
@@ -120,18 +123,18 @@ async fn visit_dirs<F>(dir: &Path, exclude: &HashSet<String>, finfo: &mut F) -> 
         }
     }
     else{
-        let path = dir.to_str().unwrap().to_owned();
+        let path = dir.to_string_lossy().into_owned();
         let is_file = dir.is_file();
         let is_symlink = dir.is_symlink();
         files.spawn(async move {
             if is_file{
-                let meta = get_file_hash(Path::new(&path)).await?;
-                Ok(Some((path.to_owned(), FileMetadataExt::File(meta))))
+                let meta = get_file_hash(dir).await?;
+                Ok(Some((path, FileMetadataExt::File(meta))))
             }
             else if is_symlink {
-                let data = fs::read_link(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
-                let meta = fs::symlink_metadata(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
-                let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
+                let data = fs::read_link(dir).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let meta = fs::symlink_metadata(&data).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let sym = SymlinkMetadata::new(&meta, data.to_string_lossy().into_owned())?;
                 Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
             }
             else{
@@ -260,7 +263,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         let db = Database::create(&args.db)?;
         let mut writer = WriteToDB::new(&db);
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &exlude, &mut writer).await?;
+            visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
         info!("Added {} files", writer.get_counter());
     }
@@ -270,7 +273,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         let mut writer = CheckDB::new(&db, args.compare_time);
 
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &exlude, &mut writer).await?;
+            visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
 
         let read_txn = db.begin_read()?;
@@ -291,7 +294,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         let mut writer = UpdateDB::new(&db);
 
         for path in args.path.iter(){
-            visit_dirs(Path::new(path), &exlude, &mut writer).await?;
+            visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
 
         let mut to_remove = Vec::new();
