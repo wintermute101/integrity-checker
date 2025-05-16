@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 use serde::{Deserialize, Serialize};
 use redb::{Database, TableDefinition, Value};
@@ -113,7 +114,7 @@ pub struct CirclQuery{
 
 impl CirclQuery {
     pub fn new(path: &str) -> Result<Self, IntegrityWatcherError>{
-        let client = Arc::new(Client::new());
+        let client = Arc::new(Client::builder().timeout(Duration::from_secs(3)).build()?);
         let limit = Arc::new(Semaphore::new(8));
         let cache = CirclCache::new(path)?;
         cache.clear_old()?;
