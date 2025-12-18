@@ -1,7 +1,7 @@
 use super::types::FileMetadataExt;
 use super::error::IntegrityWatcherError;
 use log::{debug, error, warn, info, trace};
-use redb::{Database, TableDefinition};
+use redb::{Database, TableDefinition, ReadableDatabase};
 use std::collections::HashSet;
 use chrono::DateTime;
 

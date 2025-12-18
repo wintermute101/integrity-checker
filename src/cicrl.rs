@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use serde::{Deserialize, Serialize};
-use redb::{Database, TableDefinition, Value};
+use redb::{Database, TableDefinition, Value, ReadableDatabase};
 use postcard::{from_bytes, to_allocvec};
 use log::{error, trace};
 use reqwest::{Client, StatusCode};

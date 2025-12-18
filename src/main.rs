@@ -4,7 +4,7 @@ use sha2::{Sha256, Digest};
 use std::io;
 use tokio::fs;
 use tokio::task::JoinSet;
-use redb::{Database, ReadableTable};
+use redb::{Database, ReadableTable, ReadableDatabase};
 use log::{debug, error, warn, info, trace, LevelFilter};
 use env_logger::Builder;
 use clap::{Args, Parser};
