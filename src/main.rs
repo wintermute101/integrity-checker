@@ -265,7 +265,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         for path in args.path.iter(){
             visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
-        info!("Added {} files", writer.get_counter());
+        info!("Added {} files total {}", writer.get_counter(), writer.get_bytes());
     }
 
     if args.cmd.check{
@@ -319,7 +319,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
             }
         }
         write_txn.commit()?;
-        info!("Updated {} files", writer.get_counter());
+        info!("Updated {} files total {}", writer.get_counter(), writer.get_bytes());
     }
 
     if args.cmd.compare{

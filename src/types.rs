@@ -9,6 +9,70 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::error::IntegrityWatcherError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ByteSize{
+    size: u64,
+}
+
+impl ByteSize {
+    pub fn new(size: u64) -> Self{
+        ByteSize { size }
+    }
+
+    pub fn add_size(&mut self, size: &Self) {
+        self.size += size.size;
+    }
+}
+
+impl Default for ByteSize {
+    fn default() -> Self {
+        ByteSize { size: 0 }
+    }
+}
+
+impl Into<u64> for ByteSize {
+    fn into(self) -> u64 {
+        self.size
+    }
+}
+
+impl From<u64> for ByteSize {
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
+}
+
+impl std::fmt::Display for ByteSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut pow = 0;
+        let mut size = self.size;
+        loop {
+            size >>= 10;
+            if size == 0{
+                break;
+            }
+            pow += 1;
+        }
+        let postfix = match pow{
+            0 => "B",
+            1 => "KiB",
+            2 => "MiB",
+            3 => "GiB",
+            4 => "TiB",
+            5 => "PiB",
+            _ => { pow = 5; "PiB"},
+        };
+
+        if pow == 0{
+            f.write_fmt(format_args!("{}{postfix}", self.size))
+        }
+        else{
+            let b = self.size as f64 / (1_u64 << (pow*10)) as f64;
+            f.write_fmt(format_args!("{b:.2}{postfix}"))
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Hash{
     hash: [u8;32],
@@ -62,7 +126,7 @@ pub struct SymlinkMetadata{
     pub data: String,
     pub permissions: u32,
     pub modified: u64,
-    pub size: u64,
+    pub size: ByteSize,
 }
 
 impl SymlinkMetadata {
@@ -78,7 +142,7 @@ impl SymlinkMetadata {
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
             },
-            size: meta.len(),
+            size: meta.len().into(),
         })
     }
 }
@@ -100,7 +164,7 @@ pub struct FileMetadata{
     pub hash: Hash,
     pub permissions: u32,
     pub modified: u64,
-    pub size: u64,
+    pub size: ByteSize,
 }
 
 impl FileMetadata {
@@ -116,7 +180,7 @@ impl FileMetadata {
                 Ok(t) => t.duration_since(UNIX_EPOCH)?.as_secs(),
                 Err(_) => 0,
             },
-            size: meta.len(),
+            size: meta.len().into(),
         })
     }
 }
@@ -211,5 +275,23 @@ impl Value for FileMetadataExt {
 
     fn type_name() -> redb::TypeName {
         redb::TypeName::new("FileMetadata")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_byte_sizes(){
+
+        assert_eq!(format!("{}", ByteSize::new(0)), "0B");
+        assert_eq!(format!("{}", ByteSize::new(1023)), "1023B");
+        assert_eq!(format!("{}", ByteSize::new(1024)), "1.00KiB");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024)), "1.00MiB");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024)), "1.00GiB");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024)), "1.00TiB");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024)), "1.00PiB");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024*1024)), "1024.00PiB");
     }
 }

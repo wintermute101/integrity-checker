@@ -1,4 +1,4 @@
-use super::types::FileMetadataExt;
+use super::types::{FileMetadataExt, ByteSize};
 use super::error::IntegrityWatcherError;
 use log::{debug, error, warn, info, trace};
 use redb::{Database, TableDefinition, ReadableDatabase};
@@ -13,16 +13,21 @@ pub trait AddFileInfo {
 
 pub struct WriteToDB<'ldb>{
     counter: u64,
+    byte_counter: ByteSize,
     db: &'ldb Database,
 }
 
 impl<'ldb> WriteToDB<'ldb>{
     pub fn new(db: &'ldb Database) -> Self{
-        WriteToDB{ db, counter: 0}
+        WriteToDB{ db, counter: 0, byte_counter: ByteSize::default()}
     }
 
     pub fn get_counter(&self) -> u64{
         self.counter
+    }
+
+    pub fn get_bytes(&self) -> ByteSize{
+        self.byte_counter
     }
 }
 
@@ -33,6 +38,11 @@ impl AddFileInfo for WriteToDB<'_>{
             let mut table = write_txn.open_table(TABLE)?;
             for (k,v) in data{
                 trace!("Adding file {}", k);
+                match v{
+                    FileMetadataExt::Dir(_) => {},
+                    FileMetadataExt::File(file) => self.byte_counter.add_size(&file.size),
+                    FileMetadataExt::Symlink(symlink) => self.byte_counter.add_size(&symlink.size),
+                }
                 table.insert(k, v)?;
                 self.counter+=1;
             }
@@ -45,16 +55,21 @@ impl AddFileInfo for WriteToDB<'_>{
 pub struct UpdateDB<'ldb>{
     db: &'ldb Database,
     counter: u64,
+    byte_counter: ByteSize,
     pub files: HashSet<String>
 }
 
 impl<'ldb> UpdateDB<'ldb> {
     pub fn new(db: &'ldb Database) -> Self{
-        UpdateDB{ db, counter: 0, files: HashSet::new() }
+        UpdateDB{ db, counter: 0, byte_counter: ByteSize::default(), files: HashSet::new() }
     }
 
     pub fn get_counter(&self) -> u64{
         self.counter
+    }
+
+    pub fn get_bytes(&self) -> ByteSize{
+        self.byte_counter
     }
 }
 
@@ -66,6 +81,12 @@ impl AddFileInfo for UpdateDB<'_>{
             let mut table = write_txn.open_table(TABLE)?;
             for (k,v) in files{
                 self.counter+=1;
+                match v{
+                    FileMetadataExt::Dir(_) => {},
+                    FileMetadataExt::File(file) => self.byte_counter.add_size(&file.size),
+                    FileMetadataExt::Symlink(symlink) => self.byte_counter.add_size(&symlink.size),
+                }
+
                 self.files.insert(k.to_owned());
                 if let Some(old) = table.insert(k, v)?{
                     if old.value() != *v{
