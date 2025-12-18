@@ -251,10 +251,9 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
     if args.cmd.create{
         if args.overwrite{
-            if let Err(e) = fs::remove_file(&args.db).await{
-                if e.kind() != std::io::ErrorKind::NotFound{
-                    return Err(IntegrityWatcherError::IOError { source: e, path: args.db });
-                }
+            if let Err(e) = fs::remove_file(&args.db).await
+            && e.kind() != std::io::ErrorKind::NotFound{
+                return Err(IntegrityWatcherError::IOError { source: e, path: args.db });
             }
         }
         else if fs::try_exists(&args.db).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: args.db.to_owned() })?{

@@ -42,7 +42,7 @@ impl std::fmt::Display for Bandwidth {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub struct ByteSize{
     size: u64,
 }
@@ -61,16 +61,10 @@ impl ByteSize {
     }
 }
 
-impl Default for ByteSize {
-    fn default() -> Self {
-        ByteSize { size: 0 }
-    }
-}
-
-impl Into<u64> for ByteSize {
-    fn into(self) -> u64 {
-        self.size
-    }
+impl From<ByteSize> for u64 {
+     fn from(val: ByteSize) -> Self {
+         val.size
+     }
 }
 
 impl From<u64> for ByteSize {
