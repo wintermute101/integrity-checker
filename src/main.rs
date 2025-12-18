@@ -11,6 +11,7 @@ use clap::{Args, Parser};
 use std::collections::HashSet;
 use dirs::cache_dir;
 use std::sync::Arc;
+use std::time::Instant;
 
 mod error;
 mod types;
@@ -246,6 +247,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
     for i in args.exclude{
         exlude.insert(i);
     }
+    let time = Instant::now();
 
     if args.cmd.create{
         if args.overwrite{
@@ -265,7 +267,9 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         for path in args.path.iter(){
             visit_dirs(PathBuf::from(path), &exlude, &mut writer).await?;
         }
-        info!("Added {} files total {}", writer.get_counter(), writer.get_bytes());
+        let elapsed = time.elapsed();
+        let bytes = writer.get_bytes();
+        info!("Added {} files total {} in {:.3}s {}", writer.get_counter(), bytes, elapsed.as_secs_f32(), bytes.bandwidth(elapsed));
     }
 
     if args.cmd.check{
@@ -286,7 +290,9 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
                 warn!("File removed {} {}", k.0.value(), k.1.value())
             }
         }
-        info!("Checked {} files", writer.files.len());
+        let elapsed = time.elapsed();
+        let bytes = writer.get_bytes();
+        info!("Checked {} files total {} in {:.3}s {}", writer.get_counter(), bytes, elapsed.as_secs_f32(), bytes.bandwidth(elapsed));
     }
 
     if args.cmd.update{
@@ -319,7 +325,9 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
             }
         }
         write_txn.commit()?;
-        info!("Updated {} files total {}", writer.get_counter(), writer.get_bytes());
+        let elapsed = time.elapsed();
+        let bytes = writer.get_bytes();
+        info!("Updated {} files total {} in {:.3}s {}", writer.get_counter(), bytes, elapsed.as_secs_f32(), bytes.bandwidth(elapsed));
     }
 
     if args.cmd.compare{
@@ -357,7 +365,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
                 warn!("File removed {} {}", k.0.value(), k.1.value())
             }
         }
-        info!("Checked {} files", writer.files.len());
+        info!("Checked {} files in {}", writer.files.len(), time.elapsed().as_secs_f32());
     }
 
     if args.cmd.list{

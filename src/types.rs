@@ -3,11 +3,44 @@ use postcard::{from_bytes, to_allocvec};
 use std::time::UNIX_EPOCH;
 use chrono::DateTime;
 use redb::{Value,Key};
+use std::time::Duration;
 
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 
 use super::error::IntegrityWatcherError;
+
+#[derive(Debug, Clone)]
+pub struct Bandwidth{
+    bytes: u64,
+    duration: Duration,
+}
+
+impl Bandwidth {
+    fn new(size: ByteSize, duration: Duration) -> Self{
+        Bandwidth { bytes: size.into(), duration }
+    }
+}
+
+impl std::fmt::Display for Bandwidth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+        let bandwidth = self.bytes as f64 / self.duration.as_secs_f64();
+        let mut pow = (bandwidth.log2() / 10.0).round() as u32;
+        let postfix = match pow{
+            0 => "B/s",
+            1 => "KiB/s",
+            2 => "MiB/s",
+            3 => "GiB/s",
+            4 => "TiB/s",
+            5 => "PiB/s",
+            _ => { pow = 5; "PiB/s"},
+        };
+
+        let b = bandwidth / (1_u64 << (pow*10)) as f64;
+        f.write_fmt(format_args!("{b:.2}{postfix}"))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ByteSize{
@@ -21,6 +54,10 @@ impl ByteSize {
 
     pub fn add_size(&mut self, size: &Self) {
         self.size += size.size;
+    }
+
+    pub fn bandwidth(&self, duration: Duration) -> Bandwidth{
+        Bandwidth::new(*self, duration)
     }
 }
 
@@ -293,5 +330,18 @@ mod tests {
         assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024)), "1.00TiB");
         assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024)), "1.00PiB");
         assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024*1024)), "1024.00PiB");
+    }
+
+    #[test]
+    fn test_bandwidth(){
+
+        let d = Duration::from_secs(1);
+        assert_eq!(format!("{}", ByteSize::new(0).bandwidth(d)), "0.00B/s");
+        assert_eq!(format!("{}", ByteSize::new(1024).bandwidth(d)), "1.00KiB/s");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024).bandwidth(d)), "1.00MiB/s");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024).bandwidth(d)), "1.00GiB/s");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024).bandwidth(d)), "1.00TiB/s");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024).bandwidth(d)), "1.00PiB/s");
+        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024*1024).bandwidth(d)), "1024.00PiB/s");
     }
 }

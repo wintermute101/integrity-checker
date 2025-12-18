@@ -105,13 +105,23 @@ impl AddFileInfo for UpdateDB<'_>{
 
 pub struct CheckDB<'ldb>{
     db: &'ldb Database,
+    counter: u64,
+    byte_counter: ByteSize,
     pub files: HashSet<String>,
     compare_time: bool,
 }
 
 impl<'ldb> CheckDB<'ldb>{
     pub fn new(db: &'ldb Database, compare_time: bool) -> Self{
-        CheckDB { db, files: HashSet::new(), compare_time }
+        CheckDB { db, files: HashSet::new(), compare_time, counter: 0, byte_counter: ByteSize::default() }
+    }
+
+    pub fn get_counter(&self) -> u64{
+        self.counter
+    }
+
+    pub fn get_bytes(&self) -> ByteSize{
+        self.byte_counter
     }
 }
 
@@ -122,6 +132,14 @@ impl AddFileInfo for CheckDB<'_> {
         let table = read_txn.open_table(TABLE)?;
         for (k, v) in files{
             self.files.insert(k.to_owned());
+
+            self.counter += 1;
+
+            match v{
+                FileMetadataExt::Dir(_) => {},
+                FileMetadataExt::File(file) => self.byte_counter.add_size(&file.size),
+                FileMetadataExt::Symlink(symlink) => self.byte_counter.add_size(&symlink.size),
+            }
 
             if let Some(oldv) = table.get(k)?{
                 if oldv.value() != *v{
