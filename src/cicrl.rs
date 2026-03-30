@@ -24,12 +24,12 @@ impl CacheEntry{
     }
 
     fn is_valid(&self) -> bool{
-        let end = if self.score.is_some(){
-            chrono::Utc::now() + chrono::Duration::days(30)
+        let duration = if self.score.is_some(){
+            chrono::Duration::days(30)
         } else{
-            chrono::Utc::now() + chrono::Duration::days(7)
+            chrono::Duration::days(7)
         };
-        self.entry_time < end.timestamp()
+        chrono::Utc::now().timestamp() - self.entry_time < duration.num_seconds()
     }
 
     fn get_score(&self) -> Option<u8>{
