@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::collections::VecDeque;
 use sha2::{Sha256, Digest};
+use std::io::Read;
 use std::io;
 use tokio::fs;
 use tokio::task::JoinSet;
@@ -26,8 +27,13 @@ async fn get_file_hash(path: PathBuf) -> Result<FileMetadata, IntegrityWatcherEr
     let meta = tokio::task::spawn_blocking(move || -> Result<FileMetadata, IntegrityWatcherError> {
         let mut file = std::fs::File::open(&path)
             .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
-        io::copy(&mut file, &mut hasher)
-            .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buffer)
+                .map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
+            if n == 0 { break; }
+            hasher.update(&buffer[..n]);
+        }
         let result = hasher.finalize();
         let meta = FileMetadata::new(&file.metadata().map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?, result.into())?;
         Ok(meta)
