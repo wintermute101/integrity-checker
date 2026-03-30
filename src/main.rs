@@ -39,6 +39,7 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
     where F: AddFileInfo {
     type JoinReturn = Result<Option<(String, FileMetadataExt)>, IntegrityWatcherError>;
     let mut files: JoinSet<JoinReturn> = JoinSet::new();
+    const FILES_OPEN_PRESSURE: usize = 1024;
     if exclude.contains(dir.to_str().unwrap()){
         warn!("Excluding top dir {}", dir.to_str().unwrap());
         return Ok(());
@@ -89,8 +90,9 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                     }
                 });
 
-                let mut results = Vec::new();
-                if files.len() > 128{ // writing to DB in bigger chunks is way faster
+                let mut results = Vec::with_capacity(FILES_OPEN_PRESSURE);
+                if files.len() > FILES_OPEN_PRESSURE{ // writing to DB in bigger chunks is way faster
+                    let mut count = 0;
                     while let Some(result) = files.try_join_next() {
                         let result = result?;
                         match result{
@@ -102,9 +104,11 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                                 error!("{e}");
                             }
                         }
+                        count += 1;
                     }
+                    trace!("Try Joined {count}");
                 }
-                if files.len() > 128{ //if we have too many files open we can crash need to throttle down
+                if files.len() > FILES_OPEN_PRESSURE{ //if we have too many files open we can crash need to throttle down
                     trace!("Too many files, waiting...");
                     let result = files.join_next().await.expect("we checked this in prev line")?;
                     match result{
@@ -144,8 +148,9 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
         });
     }
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(FILES_OPEN_PRESSURE);
     let res = files.join_all().await;
+    let mut count = 0;
     for r in res{
         match r{
             Ok(Some(r)) => {
@@ -156,7 +161,9 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                 error!("{e}");
             }
         }
+        count += 1;
     };
+    trace!("Final join {count}");
     finfo.add_file_info(&results)?;
 
     Ok(())
@@ -221,7 +228,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
     Builder::new()
         .filter_level(LevelFilter::Info)
         .parse_default_env()
-        .format_timestamp(None)
+        .format_timestamp(Some(env_logger::TimestampPrecision::Micros))
         .target(env_logger::Target::Stdout)
         .init();
 
