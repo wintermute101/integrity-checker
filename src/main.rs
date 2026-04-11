@@ -46,8 +46,8 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
     type JoinReturn = Result<Option<(String, FileMetadataExt)>, IntegrityWatcherError>;
     let mut files: JoinSet<JoinReturn> = JoinSet::new();
     const FILES_OPEN_PRESSURE: usize = 1024;
-    if exclude.contains(dir.to_str().unwrap()){
-        warn!("Excluding top dir {}", dir.to_str().unwrap());
+    if exclude.contains(dir.to_string_lossy().as_ref()){
+        warn!("Excluding top dir {}", dir.to_string_lossy().as_ref());
         return Ok(());
     }
     if dir.is_dir() && !dir.is_symlink() {
@@ -66,14 +66,14 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
             while let Some(entry) = direntry.next_entry().await
                     .map_err(|e| IntegrityWatcherError::IOError { source: e, path: dir.to_string_lossy().to_string() })? {
                 let path = entry.path();
-                if exclude.contains(path.to_str().unwrap()){
-                    debug!("Skipping {}", path.to_str().unwrap());
+                if exclude.contains(path.to_string_lossy().as_ref()){
+                    debug!("Skipping {}", path.to_string_lossy().as_ref());
                     continue;
                 }
                 if path.is_dir() && !path.is_symlink() {
                     dqueue.push_back(path.to_owned());
                 }
-                let path_str = path.to_str().unwrap().to_owned();
+                let path_str = path.to_string_lossy().to_string();
                 files.spawn(async move {
                     if path.is_file(){
                         let meta = get_file_hash(path).await?;
@@ -82,7 +82,7 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                     else if path.is_symlink() {
                         let data = fs::read_link(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path_str.to_owned() })?;
                         let meta = fs::symlink_metadata(&path).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_string_lossy().to_string() })?;
-                        let sym = SymlinkMetadata::new(&meta, data.to_str().unwrap().to_owned())?;
+                        let sym = SymlinkMetadata::new(&meta, data.to_string_lossy().into_owned())?;
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Symlink(sym))))
                     }
                     else if path.is_dir(){
@@ -91,7 +91,7 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                         Ok(Some((path_str.to_owned(), FileMetadataExt::Dir(dir))))
                     }
                     else{
-                        warn!("Path {} unsuported type", path.to_str().unwrap());
+                        warn!("Path {} unsuported type", path.to_string_lossy().as_ref());
                         Ok(None)
                     }
                 });
@@ -143,8 +143,8 @@ async fn visit_dirs<F>(dir: PathBuf, exclude: &HashSet<String>, finfo: &mut F) -
                 Ok(Some((path, FileMetadataExt::File(meta))))
             }
             else if is_symlink {
-                let data = fs::read_link(dir).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
-                let meta = fs::symlink_metadata(&data).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let data = fs::read_link(&dir).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
+                let meta = fs::symlink_metadata(&dir).await.map_err(|e| IntegrityWatcherError::IOError { source: e, path: path.to_owned() })?;
                 let sym = SymlinkMetadata::new(&meta, data.to_string_lossy().into_owned())?;
                 Ok(Some((path.to_owned(), FileMetadataExt::Symlink(sym))))
             }
@@ -202,7 +202,7 @@ struct Cli {
     #[arg(long, default_value_t = false)]
     compare_time: bool,
 
-   #[arg(long, default_value_t = cache_dir().unwrap_or(std::path::PathBuf::from(".")).to_string_lossy().as_ref().to_owned() + std::path::MAIN_SEPARATOR_STR + "cicrl_cache.redb")]
+   #[arg(long, default_value_t = cache_dir().unwrap_or(std::path::PathBuf::from(".")).to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR + "cicrl_cache.redb")]
 
     cache: String,
 }
@@ -247,7 +247,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
                 }
             }
             Ok(f) => {
-                args.exclude.push(f.to_str().unwrap().to_owned());
+                args.exclude.push(f.to_string_lossy().to_string());
             }
         };
         args.exclude.push(args.db.to_owned());
