@@ -142,7 +142,7 @@ impl Value for Hash {
     }
 
     fn type_name() -> redb::TypeName {
-        redb::TypeName::new("FileMetadata")
+        redb::TypeName::new("Hash")
     }
 }
 
@@ -305,7 +305,7 @@ impl Value for FileMetadataExt {
     }
 
     fn type_name() -> redb::TypeName {
-        redb::TypeName::new("FileMetadata")
+        redb::TypeName::new("FileMetadataExt")
     }
 }
 

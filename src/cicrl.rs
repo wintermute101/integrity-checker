@@ -56,7 +56,7 @@ impl Value for CacheEntry{
     }
 
     fn type_name() -> redb::TypeName {
-        redb::TypeName::new("FileMetadata")
+        redb::TypeName::new("CacheEntry")
     }
 
 }
