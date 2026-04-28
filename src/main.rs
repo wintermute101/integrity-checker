@@ -17,7 +17,7 @@ use std::time::Instant;
 mod error;
 mod types;
 mod fileops;
-mod cicrl;
+mod circl;
 use error::IntegrityWatcherError;
 use types::{DirMetadata, FileMetadata, FileMetadataExt, SymlinkMetadata};
 use fileops::{AddFileInfo, CheckDB, UpdateDB, WriteToDB, TABLE};
@@ -400,7 +400,7 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
 
         let iter = table.iter()?;
 
-        let circl = Arc::new(cicrl::CirclQuery::new(&args.cache)?);
+        let circl = Arc::new(circl::CirclQuery::new(&args.cache)?);
         type JoinReturn = Result<(String, types::Hash, Option<u8>), IntegrityWatcherError>;
         let mut queries: JoinSet<JoinReturn> = JoinSet::new();
 

@@ -37,7 +37,7 @@ pub enum IntegrityWatcherError {
     Reqwest(#[from] reqwest::Error),
 
     #[error("Invalid response {status} in hash {hash}")]
-    InvalidReponse{
+    InvalidResponse{
         status: u16,
         hash: super::types::Hash
     }

@@ -166,7 +166,7 @@ impl CirclQuery {
                 }
                 _ => {
                     if cnt == retries{
-                        return Err(IntegrityWatcherError::InvalidReponse { status: status.as_u16(), hash: hash.clone() })
+                        return Err(IntegrityWatcherError::InvalidResponse { status: status.as_u16(), hash: hash.clone() })
                     }
                     else{
                         error!("Got wrong status {status} on {url} retrying ");
