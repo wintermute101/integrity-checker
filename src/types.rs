@@ -152,7 +152,7 @@ impl Key for Hash {
    }
 }
 
-#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct SymlinkMetadata{
     pub data: String,
     pub permissions: u32,
@@ -190,7 +190,7 @@ impl std::fmt::Display for SymlinkMetadata {
     }
 }
 
-#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct FileMetadata{
     pub hash: Hash,
     pub permissions: u32,
@@ -228,7 +228,7 @@ impl std::fmt::Display for FileMetadata {
     }
 }
 
-#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct DirMetadata{
     pub permissions: u32,
     pub modified: u64,
@@ -264,7 +264,7 @@ impl std::fmt::Display for DirMetadata {
     }
 }
 
-#[derive(Debug,Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug,Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum FileMetadataExt {
     Symlink(SymlinkMetadata),
     File(FileMetadata),
@@ -315,27 +315,40 @@ mod tests {
 
     #[test]
     fn test_byte_sizes(){
-
-        assert_eq!(format!("{}", ByteSize::new(0)), "0B");
-        assert_eq!(format!("{}", ByteSize::new(1023)), "1023B");
-        assert_eq!(format!("{}", ByteSize::new(1024)), "1.00KiB");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024)), "1.00MiB");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024)), "1.00GiB");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024)), "1.00TiB");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024)), "1.00PiB");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024*1024)), "1024.00PiB");
+        let cases = [
+            (0, "0B"),
+            (1023, "1023B"),
+            (1024, "1.00KiB"),
+            (1024*2, "2.00KiB"),
+             (1024*1024, "1.00MiB"),
+             ((1024.0 * 1024.0 * 1.5) as u64, "1.50MiB"),
+             (1024*1024*1024, "1.00GiB"),
+            (1024*1024*1024*1024, "1.00TiB"),
+            (1024*1024*1024*1024*1024, "1.00PiB"),
+            (1024*1024*1024*1024*1024*1024, "1024.00PiB"),
+        ];
+        for (size, expected) in cases {
+            assert_eq!(format!("{}", ByteSize::new(size)), expected, "Failed for size {}", size);
+        }
     }
 
     #[test]
     fn test_bandwidth(){
-
         let d = Duration::from_secs(1);
-        assert_eq!(format!("{}", ByteSize::new(0).bandwidth(d)), "0.00B/s");
-        assert_eq!(format!("{}", ByteSize::new(1024).bandwidth(d)), "1.00KiB/s");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024).bandwidth(d)), "1.00MiB/s");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024).bandwidth(d)), "1.00GiB/s");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024).bandwidth(d)), "1.00TiB/s");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024).bandwidth(d)), "1.00PiB/s");
-        assert_eq!(format!("{}", ByteSize::new(1024*1024*1024*1024*1024*1024).bandwidth(d)), "1024.00PiB/s");
+        let cases = [
+            (0u64, "0.00B/s"),
+            (1024u64, "1.00KiB/s"),
+            (1024u64*1024u64, "1.00MiB/s"),
+            (1024u64*1024u64*1024u64, "1.00GiB/s"),
+            (1024u64*1024u64*1024u64*1024u64, "1.00TiB/s"),
+            (1024u64*1024u64*1024u64*1024u64*1024u64, "1.00PiB/s"),
+            (1024u64*1024u64*1024u64*1024u64*1024u64*1024u64, "1024.00PiB/s"),
+        ];
+        for (size, expected) in cases {
+            assert_eq!(format!("{}", ByteSize::new(size).bandwidth(d)), expected, "Failed for size {}", size);
+        }
+
+        let d_half = Duration::from_millis(500);
+        assert_eq!(format!("{}", ByteSize::new(512).bandwidth(d_half)), "1.00KiB/s");
     }
 }

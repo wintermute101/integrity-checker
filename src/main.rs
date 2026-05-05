@@ -296,15 +296,24 @@ async fn main_fun() -> Result<(),IntegrityWatcherError> {
         let table = read_txn.open_table(TABLE)?;
         let iter = table.iter()?;
 
+        let mut removed_counter: u64 = 0;
         for k in iter{
             let k = k?;
             if !writer.files.contains(&k.0.value()){
+                removed_counter += 1;
                 warn!("File removed {} {}", k.0.value(), k.1.value())
             }
         }
         let elapsed = time.elapsed();
         let bytes = writer.get_bytes();
-        info!("Checked {} files total {} in {:.3}s {}", writer.get_counter(), bytes, elapsed.as_secs_f32(), bytes.bandwidth(elapsed));
+        info!("Checked {} files total {} in {:.3}s {} new files {} modified {} removed {removed_counter}",
+            writer.get_counter(),
+            bytes,
+            elapsed.as_secs_f32(),
+            bytes.bandwidth(elapsed),
+            writer.get_new_files_count(),
+            writer.get_changes_count()
+        );
     }
 
     if args.cmd.update{
