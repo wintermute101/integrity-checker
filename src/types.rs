@@ -26,7 +26,7 @@ impl std::fmt::Display for Bandwidth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
         let bandwidth = self.bytes as f64 / self.duration.as_secs_f64();
-        let mut pow = (bandwidth.log2() / 10.0).round() as u32;
+        let mut pow = (bandwidth.log2() / 10.0).floor() as u32;
         let postfix = match pow{
             0 => "B/s",
             1 => "KiB/s",
@@ -320,9 +320,9 @@ mod tests {
             (1023, "1023B"),
             (1024, "1.00KiB"),
             (1024*2, "2.00KiB"),
-             (1024*1024, "1.00MiB"),
-             ((1024.0 * 1024.0 * 1.5) as u64, "1.50MiB"),
-             (1024*1024*1024, "1.00GiB"),
+            (1024*1024, "1.00MiB"),
+            (1024 * 1024 * 3 / 2, "1.50MiB"),
+            (1024*1024*1024, "1.00GiB"),
             (1024*1024*1024*1024, "1.00TiB"),
             (1024*1024*1024*1024*1024, "1.00PiB"),
             (1024*1024*1024*1024*1024*1024, "1024.00PiB"),
@@ -337,6 +337,7 @@ mod tests {
         let d = Duration::from_secs(1);
         let cases = [
             (0u64, "0.00B/s"),
+            (1023u64, "1023.00B/s"),
             (1024u64, "1.00KiB/s"),
             (1024u64*1024u64, "1.00MiB/s"),
             (1024u64*1024u64*1024u64, "1.00GiB/s"),
